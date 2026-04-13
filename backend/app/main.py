@@ -7,7 +7,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import HTTPException as StarletteHTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -43,6 +43,8 @@ origines_autorisees = [
     "http://127.0.0.1:5500",
     "http://localhost:5501",
     "http://127.0.0.1:5501",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
 ]
 
 application.add_middleware(
@@ -144,6 +146,20 @@ async def lire_configuration():
         "token_expiry": f"{os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES', '30')} minutes",
         "ninjas_api": "configure" if os.getenv("NINJAS_API_KEY") else "fallback local actif",
     }
+
+
+@application.exception_handler(RequestValidationError)
+async def gestionnaire_erreur_validation(request: Request, exc: RequestValidationError):
+    """Retourne les details de validation Pydantic pour faciliter le debogage."""
+    errors = [
+        {"loc": e["loc"], "msg": e["msg"], "type": e["type"], "input": str(e.get("input", ""))}
+        for e in exc.errors()
+    ]
+    print(f"[VALIDATION 422] body={exc.body!r} errors={errors}")
+    return JSONResponse(
+        status_code=422,
+        content={"status": "error", "code": 422, "detail": errors},
+    )
 
 
 @application.exception_handler(StarletteHTTPException)

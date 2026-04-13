@@ -109,21 +109,75 @@ class DonneesNote(BaseModel):
 # Liste de citations de secours utilisee quand API Ninjas est indisponible.
 # Garantit que l'application reste fonctionnelle meme sans connexion internet.
 CITATIONS_SECOURS = [
-    {"text": "La vie est un mystere qu'il faut vivre, et non un probleme a resoudre.", "author": "Gandhi"},
-    {"text": "Le succes, c'est d'aller d'echec en echec sans perdre son enthousiasme.", "author": "Winston Churchill"},
-    {"text": "Le seul veritable voyage est celui qu'on fait au-dedans de soi.", "author": "Marcel Proust"},
-    {"text": "Savoir s'etonner est le premier pas du coeur vers la decouverte.", "author": "Louis Pasteur"},
-    {"text": "La simplicite est la sophistication supreme.", "author": "Leonardo da Vinci"},
-    {"text": "Vis comme si tu devais mourir demain. Apprends comme si tu devais vivre toujours.", "author": "Mahatma Gandhi"},
-    {"text": "Le bonheur est parfois cache dans l'inconnu.", "author": "Victor Hugo"},
-    {"text": "Agis avec bonte, mais n'attends pas de reconnaissance.", "author": "Confucius"},
-    {"text": "Le plus grand risque est de ne prendre aucun risque.", "author": "Mark Zuckerberg"},
-    {"text": "La vie, ce n'est pas d'attendre que les orages passent, c'est d'apprendre a danser sous la pluie.", "author": "Seneque"},
-    {"text": "Le savoir est la seule richesse qui ne peut nous etre volee.", "author": "Socrate"},
-    {"text": "Je pense, donc je suis.", "author": "Rene Descartes"},
-    {"text": "Carpe diem, quam minimum credula postero.", "author": "Horace"},
-    {"text": "Connais-toi toi-meme.", "author": "Socrate"},
-    {"text": "L'imagination est plus importante que le savoir.", "author": "Albert Einstein"},
+    # life
+    {"text": "La vie est un mystere qu'il faut vivre, et non un probleme a resoudre.", "author": "Gandhi", "category": "life"},
+    {"text": "La vie, ce n'est pas d'attendre que les orages passent, c'est d'apprendre a danser sous la pluie.", "author": "Seneque", "category": "life"},
+    {"text": "Carpe diem, quam minimum credula postero.", "author": "Horace", "category": "life"},
+    {"text": "Life is what happens when you're busy making other plans.", "author": "John Lennon", "category": "life"},
+    {"text": "In the end, it's not the years in your life that count. It's the life in your years.", "author": "Abraham Lincoln", "category": "life"},
+    # success
+    {"text": "Le succes, c'est d'aller d'echec en echec sans perdre son enthousiasme.", "author": "Winston Churchill", "category": "success"},
+    {"text": "Le plus grand risque est de ne prendre aucun risque.", "author": "Mark Zuckerberg", "category": "success"},
+    {"text": "Success is not final, failure is not fatal: it is the courage to continue that counts.", "author": "Winston Churchill", "category": "success"},
+    {"text": "The secret of success is to do the common thing uncommonly well.", "author": "John D. Rockefeller", "category": "success"},
+    # inspirational
+    {"text": "Le seul veritable voyage est celui qu'on fait au-dedans de soi.", "author": "Marcel Proust", "category": "inspirational"},
+    {"text": "Vis comme si tu devais mourir demain. Apprends comme si tu devais vivre toujours.", "author": "Mahatma Gandhi", "category": "inspirational"},
+    {"text": "The only way to do great work is to love what you do.", "author": "Steve Jobs", "category": "inspirational"},
+    {"text": "Believe you can and you're halfway there.", "author": "Theodore Roosevelt", "category": "inspirational"},
+    # happiness
+    {"text": "Le bonheur est parfois cache dans l'inconnu.", "author": "Victor Hugo", "category": "happiness"},
+    {"text": "Happiness is not something ready-made. It comes from your own actions.", "author": "Dalai Lama", "category": "happiness"},
+    {"text": "The most important thing is to enjoy your life — to be happy — it's all that matters.", "author": "Audrey Hepburn", "category": "happiness"},
+    # wisdom
+    {"text": "Agis avec bonte, mais n'attends pas de reconnaissance.", "author": "Confucius", "category": "wisdom"},
+    {"text": "Connais-toi toi-meme.", "author": "Socrate", "category": "wisdom"},
+    {"text": "The fool doth think he is wise, but the wise man knows himself to be a fool.", "author": "William Shakespeare", "category": "wisdom"},
+    {"text": "Yesterday I was clever, so I wanted to change the world. Today I am wise, so I am changing myself.", "author": "Rumi", "category": "wisdom"},
+    # knowledge
+    {"text": "Savoir s'etonner est le premier pas du coeur vers la decouverte.", "author": "Louis Pasteur", "category": "knowledge"},
+    {"text": "Le savoir est la seule richesse qui ne peut nous etre volee.", "author": "Socrate", "category": "knowledge"},
+    {"text": "Je pense, donc je suis.", "author": "Rene Descartes", "category": "knowledge"},
+    {"text": "L'imagination est plus importante que le savoir.", "author": "Albert Einstein", "category": "knowledge"},
+    {"text": "An investment in knowledge pays the best interest.", "author": "Benjamin Franklin", "category": "knowledge"},
+    {"text": "The more that you read, the more things you will know.", "author": "Dr. Seuss", "category": "knowledge"},
+    # art
+    {"text": "La simplicite est la sophistication supreme.", "author": "Leonardo da Vinci", "category": "art"},
+    {"text": "Every artist was first an amateur.", "author": "Ralph Waldo Emerson", "category": "art"},
+    {"text": "Art enables us to find ourselves and lose ourselves at the same time.", "author": "Thomas Merton", "category": "art"},
+    # love
+    {"text": "Aimer, c'est trouver sa richesse hors de soi.", "author": "Alain", "category": "love"},
+    {"text": "On n'aime bien qu'une seule fois, c'est la premiere.", "author": "La Bruyere", "category": "love"},
+    {"text": "The best thing to hold onto in life is each other.", "author": "Audrey Hepburn", "category": "love"},
+    {"text": "Where there is love there is life.", "author": "Mahatma Gandhi", "category": "love"},
+    # courage
+    {"text": "Le courage, c'est de chercher la verite et de la dire.", "author": "Jean Jaures", "category": "courage"},
+    {"text": "La bravure, c'est la peur qui a dit ses prieres.", "author": "Dorothy Bernard", "category": "courage"},
+    {"text": "Courage is not the absence of fear, but acting in spite of it.", "author": "Mark Twain", "category": "courage"},
+    {"text": "It takes courage to grow up and become who you really are.", "author": "E.E. Cummings", "category": "courage"},
+    # friendship
+    {"text": "L'amitie double les joies et divise les peines.", "author": "Francis Bacon", "category": "friendship"},
+    {"text": "Un ami, c'est quelqu'un qui vous connait bien et qui vous aime quand meme.", "author": "Elbert Hubbard", "category": "friendship"},
+    {"text": "A real friend is one who walks in when the rest of the world walks out.", "author": "Walter Winchell", "category": "friendship"},
+    {"text": "Friendship is the only cement that will ever hold the world together.", "author": "Woodrow Wilson", "category": "friendship"},
+    # faith
+    {"text": "La foi, c'est monter le premier pas meme quand on ne voit pas l'escalier.", "author": "Martin Luther King", "category": "faith"},
+    {"text": "Faith is taking the first step even when you don't see the whole staircase.", "author": "Martin Luther King", "category": "faith"},
+    # nature
+    {"text": "La nature est le seul livre qui offre un contenu precieux sur toutes ses pages.", "author": "Goethe", "category": "nature"},
+    {"text": "Look deep into nature, and then you will understand everything better.", "author": "Albert Einstein", "category": "nature"},
+    {"text": "In every walk with nature, one receives far more than he seeks.", "author": "John Muir", "category": "nature"},
+    # leadership
+    {"text": "Le leadership, c'est l'art de faire faire aux autres ce que vous voulez.", "author": "Dwight D. Eisenhower", "category": "leadership"},
+    {"text": "A leader is one who knows the way, goes the way, and shows the way.", "author": "John C. Maxwell", "category": "leadership"},
+    {"text": "Leadership is not about being in charge. It is about taking care of those in your charge.", "author": "Simon Sinek", "category": "leadership"},
+    # education
+    {"text": "L'education est l'arme la plus puissante pour changer le monde.", "author": "Nelson Mandela", "category": "education"},
+    {"text": "Education is not the filling of a pail, but the lighting of a fire.", "author": "W.B. Yeats", "category": "education"},
+    {"text": "The roots of education are bitter, but the fruit is sweet.", "author": "Aristotle", "category": "education"},
+    # funny
+    {"text": "I am so clever that sometimes I don't understand a single word of what I am saying.", "author": "Oscar Wilde", "category": "funny"},
+    {"text": "People say nothing is impossible, but I do nothing every day.", "author": "A.A. Milne", "category": "funny"},
 ]
 
 
@@ -283,10 +337,9 @@ async def obtenir_citation_aleatoire(
 
     if CLE_API_NINJAS:
         try:
-            # Construction des parametres de la requete API Ninjas
             params_ninjas = {}
             if category:
-                params_ninjas["category"] = category.lower().strip()
+                params_ninjas["categories"] = category.lower().strip()
             if author:
                 params_ninjas["author"] = author.strip()
 
@@ -307,21 +360,26 @@ async def obtenir_citation_aleatoire(
                     )
                     return ReponseCitation(**citation)
 
-            print(f"[Citations] API Ninjas a retourne {reponse.status_code}")
+            print(f"[Citations] API Ninjas a retourne {reponse.status_code} - params={params_ninjas} - body={reponse.text}")
 
         except Exception as exc:
             print(f"[Citations] Erreur API Ninjas: {exc}")
 
-    # Fallback local : filtrage par auteur si specifie (insensible a la casse)
+    # Fallback local : filtrage par categorie et/ou auteur (insensible a la casse)
     pool = CITATIONS_SECOURS
+    if category:
+        filtre_cat = category.lower().strip()
+        filtrees_cat = [c for c in pool if c.get("category", "").lower() == filtre_cat]
+        if filtrees_cat:
+            pool = filtrees_cat
     if author:
-        filtre = author.lower().strip()
-        filtrees = [c for c in pool if filtre in c["author"].lower()]
-        if filtrees:
-            pool = filtrees
+        filtre_aut = author.lower().strip()
+        filtrees_aut = [c for c in pool if filtre_aut in c["author"].lower()]
+        if filtrees_aut:
+            pool = filtrees_aut
 
     citation = random.choice(pool)
-    return ReponseCitation(**normaliser_citation(citation["text"], citation["author"], category or "general"))
+    return ReponseCitation(**normaliser_citation(citation["text"], citation["author"], citation.get("category") or category or "general"))
 
 
 @router.get(
