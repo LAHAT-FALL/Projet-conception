@@ -507,7 +507,11 @@ async function obtenirCitationAleatoire() {
                 deconnecterUtilisateur();
                 throw new Error('Session expiree, veuillez vous reconnecter');
             }
-            throw new Error('Erreur lors du chargement de la citation');
+            if (reponse.status === 404 && author) {
+                throw new Error(`Aucune citation de l'auteur "${author}" n'a été trouvée.`);
+            }
+            const erreurData = await reponse.json().catch(() => ({}));
+            throw new Error(erreurData.detail || 'Erreur lors du chargement de la citation');
         }
 
         definirCitationCourante(await reponse.json());

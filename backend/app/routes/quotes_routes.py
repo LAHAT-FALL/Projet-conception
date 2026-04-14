@@ -39,7 +39,7 @@ router = APIRouter()
 CLE_API_NINJAS = os.getenv("NINJAS_API_KEY")
 
 # URL du service externe de citations API Ninjas
-URL_API_NINJAS = "https://api.api-ninjas.com/v1/quotes"
+URL_API_NINJAS = "https://api.api-ninjas.com/v2/randomquotes"
 
 # URL du service de traduction MyMemory (gratuit, sans cle API)
 URL_MYMEMORY = "https://api.mymemory.translated.net/get"
@@ -311,6 +311,63 @@ def persister_citation_si_possible(citation: dict):
     )
 
 
+def seeder_citations_secours():
+    """
+    Insere les CITATIONS_SECOURS dans MongoDB si la collection est vide.
+    Appele au demarrage pour garantir un pool de fallback persistant.
+    """
+    collection_citations = obtenir_collection_citations()
+    if collection_citations is None:
+        return
+
+    if collection_citations.count_documents({}) == 0:
+        print("[Citations] Collection vide — insertion des citations de secours initiales")
+        for c in CITATIONS_SECOURS:
+            citation = normaliser_citation(c["text"], c["author"], c.get("category", "general"))
+            persister_citation_si_possible(citation)
+        print(f"[Citations] {len(CITATIONS_SECOURS)} citations inserees en base")
+
+
+def charger_citation_aleatoire_depuis_mongodb(
+    category: Optional[str] = None,
+    author: Optional[str] = None,
+) -> Optional[dict]:
+    """
+    Recupere une citation aleatoire depuis MongoDB via $sample.
+
+    Applique les filtres categorie et auteur si fournis.
+    Retourne None si aucun resultat ou si MongoDB est indisponible.
+    Ne fait PAS de retry sans filtres : l'absence de resultat est signalee
+    au code appelant pour qu'il retourne une erreur appropriee.
+    """
+    collection_citations = obtenir_collection_citations()
+    if collection_citations is None:
+        return None
+
+    filtre: dict = {}
+    if category:
+        filtre["category"] = category.lower().strip()
+    if author:
+        filtre["author"] = {"$regex": author.strip(), "$options": "i"}
+
+    pipeline = []
+    if filtre:
+        pipeline.append({"$match": filtre})
+    pipeline.append({"$sample": {"size": 1}})
+
+    resultats = list(collection_citations.aggregate(pipeline))
+    if not resultats:
+        return None
+
+    doc = resultats[0]
+    return {
+        "id": doc["id"],
+        "text": doc["text"],
+        "author": doc["author"],
+        "category": doc.get("category", "general"),
+    }
+
+
 @router.get(
     "/random",
     response_model=ReponseCitation,
@@ -329,9 +386,9 @@ async def obtenir_citation_aleatoire(
     - author   : filtrer par auteur (recherche partielle)
 
     Strategie :
-    1. Si la cle API Ninjas est configuree, appel au service externe avec les filtres
-    2. Si l'appel echoue ou la cle est absente, choix aleatoire dans CITATIONS_SECOURS
-       (le filtre auteur est applique localement si possible)
+    1. API Ninjas (si cle configuree) → citation persistee en MongoDB
+    2. MongoDB (pool accumule) → citation aleatoire avec filtres
+    3. CITATIONS_SECOURS (liste locale) → dernier recours
     """
     print(f"[Citations] Generation de citation pour l'utilisateur {utilisateur_id} (category={category}, author={author})")
 
@@ -353,33 +410,50 @@ async def obtenir_citation_aleatoire(
             if reponse.status_code == 200:
                 donnees = reponse.json()
                 if donnees:
-                    citation = normaliser_citation(
-                        texte=donnees[0]["quote"],
-                        auteur=donnees[0]["author"],
-                        categorie=donnees[0].get("category", category or "general"),
-                    )
-                    return ReponseCitation(**citation)
+                    auteur_retourne = donnees[0]["author"]
+                    # v2/randomquotes retourne "categories" comme tableau
+                    categories_retournees = donnees[0].get("categories", [])
+
+                    # Validation auteur
+                    auteur_invalide = author and author.lower().strip() not in auteur_retourne.lower()
+                    # Validation categorie : la categorie demandee doit etre dans le tableau
+                    categorie_invalide = category and category.lower().strip() not in [c.lower() for c in categories_retournees]
+
+                    if auteur_invalide:
+                        print(f"[Citations] Rejet API Ninjas — auteur {auteur_retourne!r} != filtre {author!r}")
+                    elif categorie_invalide:
+                        print(f"[Citations] Rejet API Ninjas — categories {categories_retournees!r} ne contient pas {category!r}")
+                    else:
+                        citation = normaliser_citation(
+                            texte=donnees[0]["quote"],
+                            auteur=auteur_retourne,
+                            categorie=category or (categories_retournees[0] if categories_retournees else "general"),
+                        )
+                        persister_citation_si_possible(citation)
+                        return ReponseCitation(**citation)
 
             print(f"[Citations] API Ninjas a retourne {reponse.status_code} - params={params_ninjas} - body={reponse.text}")
 
         except Exception as exc:
             print(f"[Citations] Erreur API Ninjas: {exc}")
 
-    # Fallback local : filtrage par categorie et/ou auteur (insensible a la casse)
-    pool = CITATIONS_SECOURS
-    if category:
-        filtre_cat = category.lower().strip()
-        filtrees_cat = [c for c in pool if c.get("category", "").lower() == filtre_cat]
-        if filtrees_cat:
-            pool = filtrees_cat
-    if author:
-        filtre_aut = author.lower().strip()
-        filtrees_aut = [c for c in pool if filtre_aut in c["author"].lower()]
-        if filtrees_aut:
-            pool = filtrees_aut
+    # Fallback : MongoDB (citations accumulees), avec les memes filtres
+    citation_db = charger_citation_aleatoire_depuis_mongodb(category, author)
+    if citation_db:
+        print(f"[Citations] Fallback MongoDB utilise (category={category}, author={author})")
+        return ReponseCitation(**citation_db)
 
-    citation = random.choice(pool)
-    return ReponseCitation(**normaliser_citation(citation["text"], citation["author"], citation.get("category") or category or "general"))
+    # Aucun resultat avec filtre auteur : on retourne une erreur explicite
+    if author:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Aucune citation de l\'auteur "{author}" n\'a été trouvée.',
+        )
+
+    # Sans filtre et sans MongoDB : dernier recours sur la liste locale
+    print("[Citations] Fallback local utilise (aucun filtre, MongoDB indisponible)")
+    citation = random.choice(CITATIONS_SECOURS)
+    return ReponseCitation(**normaliser_citation(citation["text"], citation["author"], citation.get("category") or "general"))
 
 
 @router.get(
@@ -406,14 +480,6 @@ async def obtenir_citation_du_jour(utilisateur_id: str = Depends(obtenir_utilisa
     if _cache_citation_jour["date"] == aujourd_hui and _cache_citation_jour["citation"]:
         return ReponseCitation(**_cache_citation_jour["citation"])
 
-    # Fallback deterministe : meme index = meme citation pour une date donnee
-    numero_jour = int(aujourd_hui.replace("-", "")) % len(CITATIONS_SECOURS)
-    citation_fallback = normaliser_citation(
-        CITATIONS_SECOURS[numero_jour]["text"],
-        CITATIONS_SECOURS[numero_jour]["author"],
-        "general",
-    )
-
     if CLE_API_NINJAS:
         try:
             reponse = requests.get(
@@ -429,12 +495,26 @@ async def obtenir_citation_du_jour(utilisateur_id: str = Depends(obtenir_utilisa
                         auteur=donnees[0]["author"],
                         categorie=donnees[0].get("category", "general"),
                     )
+                    persister_citation_si_possible(citation)
                     _cache_citation_jour = {"date": aujourd_hui, "citation": citation}
                     return ReponseCitation(**citation)
         except Exception as exc:
             print(f"[Citations] Erreur API Ninjas pour citation du jour: {exc}")
 
-    # Mise en cache du fallback pour eviter de recalculer a chaque requete
+    # Fallback 1 : MongoDB
+    citation_db = charger_citation_aleatoire_depuis_mongodb()
+    if citation_db:
+        print("[Citations] Citation du jour depuis MongoDB")
+        _cache_citation_jour = {"date": aujourd_hui, "citation": citation_db}
+        return ReponseCitation(**citation_db)
+
+    # Fallback 2 : liste locale, selection deterministe par date
+    numero_jour = int(aujourd_hui.replace("-", "")) % len(CITATIONS_SECOURS)
+    citation_fallback = normaliser_citation(
+        CITATIONS_SECOURS[numero_jour]["text"],
+        CITATIONS_SECOURS[numero_jour]["author"],
+        CITATIONS_SECOURS[numero_jour].get("category", "general"),
+    )
     _cache_citation_jour = {"date": aujourd_hui, "citation": citation_fallback}
     return ReponseCitation(**citation_fallback)
 
