@@ -248,6 +248,10 @@
                         <i class="fas fa-language"></i>
                         Traduire
                     </button>
+                    <button type="button" onclick="expliquerCitation()" class="btn-outline" id="boutonExpliquer" disabled>
+                        <i class="fas fa-robot"></i>
+                        Expliquer
+                    </button>
                     <button type="button" onclick="copierCitationCourante()" class="btn-outline" id="boutonCopierCitation" disabled>
                         <i class="fas fa-copy"></i>
                         Copier
@@ -423,6 +427,9 @@
                 <p class="favorite-note hidden"></p>
             </div>
             <div class="favorite-actions">
+                <button class="btn-icon ask-ai" title="Demander à l'IA d'expliquer cette citation">
+                    <i class="fas fa-robot"></i>
+                </button>
                 <button class="btn-icon edit-note" title="Modifier la note personnelle">
                     <i class="fas fa-sticky-note"></i>
                 </button>
@@ -440,6 +447,35 @@
     <div id="toastNotification" class="toast hidden">
         <i class="fas fa-check-circle"></i>
         <span id="toastMessage">Operation reussie</span>
+    </div>
+
+    <!-- Bouton flottant chatbot -->
+    <button id="boutonChat" class="chat-fab hidden" onclick="toggleChat()" title="Assistant IA">
+        <i class="fas fa-robot"></i>
+    </button>
+
+    <!-- Panel de chat -->
+    <div id="panelChat" class="chat-panel hidden">
+        <div class="chat-header">
+            <div class="chat-header-info">
+                <i class="fas fa-robot"></i>
+                <span>Assistant QuoteKeeper</span>
+            </div>
+            <button class="chat-close" onclick="toggleChat()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div id="chatMessages" class="chat-messages">
+            <div class="chat-message bot">
+                <div class="chat-bubble">Bonjour ! Je suis votre assistant culturel. Posez-moi des questions sur vos citations, leurs auteurs, ou explorez des thèmes philosophiques et littéraires.</div>
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <input type="text" id="chatInput" class="chat-input" placeholder="Posez votre question..." onkeydown="if(event.key==='Enter') envoyerMessage()">
+            <button class="chat-send" onclick="envoyerMessage()">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
     </div>
 
     <script src="js/script.js"></script>

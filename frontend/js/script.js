@@ -48,6 +48,12 @@ let paginationFavoris = { page: 1, parPage: 8 };
 function afficherPage(identifiantPage) {
     document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
     document.getElementById(identifiantPage).classList.add('active');
+    const boutonChat = document.getElementById('boutonChat');
+    if (boutonChat) {
+        identifiantPage === 'pagePrincipale'
+            ? boutonChat.classList.remove('hidden')
+            : boutonChat.classList.add('hidden');
+    }
 }
 
 /** Raccourci vers la page d'inscription */
@@ -183,6 +189,7 @@ function deconnecterUtilisateur() {
     document.getElementById('boutonAjouterFavori').disabled = true;
     document.getElementById('boutonCopierCitation').disabled = true;
     document.getElementById('boutonTraduire').disabled = true;
+    document.getElementById('boutonExpliquer').disabled = true;
     document.getElementById('zoneTraduction').classList.add('hidden');
     document.getElementById('texteTraduction').textContent = '';
 
@@ -455,6 +462,7 @@ function definirCitationCourante(citation) {
     document.getElementById('boutonAjouterFavori').disabled = false;
     document.getElementById('boutonCopierCitation').disabled = false;
     document.getElementById('boutonTraduire').disabled = false;
+    document.getElementById('boutonExpliquer').disabled = false;
 
     document.getElementById('zoneTraduction').classList.add('hidden');
     document.getElementById('texteTraduction').textContent = '';
@@ -874,6 +882,15 @@ function afficherFavoris() {
             elemNote.classList.remove('hidden');
         }
 
+        // Bouton demander a l'IA : retour page principale + ouverture chat avec citation en contexte
+        clone.querySelector('.ask-ai').onclick = () => {
+            afficherPage('pagePrincipale');
+            if (!chatOuvert) toggleChat();
+            const input = document.getElementById('chatInput');
+            input.value = 'Peux-tu m\'expliquer cette citation ?';
+            envoyerMessage(citation);
+        };
+
         // Bouton modifier la note
         clone.querySelector('.edit-note').onclick = () =>
             modifierNoteFavori(citation.id, citation.note || '');
@@ -1072,3 +1089,99 @@ document.addEventListener('DOMContentLoaded', async () => {
         afficherFavoris();
     });
 });
+
+// ─────────────────────────────────────────────
+// CHATBOT GEMINI
+// ─────────────────────────────────────────────
+
+let chatOuvert = false;
+
+/** Ouvre ou ferme le panel de chat. */
+function toggleChat() {
+    chatOuvert = !chatOuvert;
+    const panel = document.getElementById('panelChat');
+    const bouton = document.getElementById('boutonChat');
+    panel.classList.toggle('hidden', !chatOuvert);
+    bouton.classList.toggle('active', chatOuvert);
+    if (chatOuvert) document.getElementById('chatInput').focus();
+}
+
+/**
+ * Ouvre le chat et pre-remplit avec un message d'explication
+ * de la citation courante.
+ */
+function expliquerCitation() {
+    if (!citationCourante) return;
+    if (!chatOuvert) toggleChat();
+    const input = document.getElementById('chatInput');
+    input.value = `Peux-tu m'expliquer cette citation ?`;
+    input.focus();
+    envoyerMessage(citationCourante);
+}
+
+/**
+ * Envoie le message saisi au backend /api/chat et affiche la reponse.
+ * @param {object|null} citationContexte - Citation a joindre en contexte (optionnel)
+ */
+async function envoyerMessage(citationContexte = null) {
+    const input = document.getElementById('chatInput');
+    const message = input.value.trim();
+    if (!message) return;
+
+    const jeton = localStorage.getItem('token');
+    input.value = '';
+
+    ajouterMessageChat('user', message);
+    const indicateur = ajouterMessageChat('bot', '...');
+
+    try {
+        const reponse = await fetch(`${URL_API}/chat`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${jeton}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message,
+                citation: citationContexte || citationCourante || null,
+            }),
+        });
+
+        if (reponse.status === 401) {
+            deconnecterUtilisateur();
+            return;
+        }
+
+        const donnees = await reponse.json();
+        if (!reponse.ok) {
+            indicateur.textContent = donnees.detail || 'Erreur de réponse.';
+        } else {
+            indicateur.textContent = donnees.reply || 'Erreur de réponse.';
+        }
+    } catch {
+        indicateur.textContent = 'Impossible de joindre le service de chat.';
+    }
+
+    // Scroll automatique vers le bas
+    const zone = document.getElementById('chatMessages');
+    zone.scrollTop = zone.scrollHeight;
+}
+
+/**
+ * Ajoute un message dans la zone de chat et retourne la bulle.
+ * @param {'user'|'bot'} role
+ * @param {string} texte
+ * @returns {HTMLElement} La bulle de texte (pour mise a jour ulterieure)
+ */
+function ajouterMessageChat(role, texte) {
+    const zone = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = `chat-message ${role}`;
+    const bulle = document.createElement('div');
+    bulle.className = 'chat-bubble';
+    bulle.textContent = texte;
+    div.appendChild(bulle);
+    zone.appendChild(div);
+    zone.scrollTop = zone.scrollHeight;
+    return bulle;
+}

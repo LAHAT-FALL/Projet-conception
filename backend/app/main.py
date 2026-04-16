@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.auth import verifier_jeton
 from app.database import obtenir_statut_base_donnees
-from app.routes import auth_routes, google_routes, quotes_routes
+from app.routes import auth_routes, google_routes, quotes_routes, chat_routes
 from app.routes.quotes_routes import seeder_citations_secours
 
 load_dotenv()
@@ -59,6 +59,7 @@ application.add_middleware(
 application.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentification"])
 application.include_router(google_routes.router, prefix="/api/auth", tags=["Authentification Google"])
 application.include_router(quotes_routes.router, prefix="/api/quotes", tags=["Citations"])
+application.include_router(chat_routes.router, prefix="/api/chat", tags=["Chat"])
 
 
 @application.on_event("startup")
