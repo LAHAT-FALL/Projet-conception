@@ -43,24 +43,91 @@ Schemas de donnees impliques :
     http://localhost:5500?token=JWT&nom=Jean&user_id=...&email=...
 """
 
+import hashlib
+import hmac
 import os
 import re
+import secrets
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, RedirectResponse
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from typing import Optional
 from pydantic import BaseModel
 from pymongo import ReturnDocument
 
-from app.auth import creer_jeton_acces
+from app.auth import DUREE_EXPIRATION_JETON_MINUTES, creer_jeton_acces, CLE_SECRETE
 from app.database import obtenir_collection_utilisateurs
 from app.demo_store import upsert_demo_user
 
 # Routeur FastAPI — monte sous le prefixe /api/auth dans main.py
 router = APIRouter()
+
+# Schemes autorises pour le parametre state (mobile OAuth redirect)
+_SCHEMES_MOBILES_AUTORISES = {"exp", "quotekeeper"}
+
+# Liste blanche des hotes autorises pour les redirections HTTPS mobiles
+_HOTES_HTTPS_AUTORISES = {
+    "localhost",
+    "127.0.0.1",
+}
+
+
+def _state_est_valide(state: str) -> bool:
+    """
+    Valide que le parametre state contient une URL mobile autorisee.
+    Previent les attaques de type open redirect via manipulation du state OAuth.
+
+    Regles :
+    - Schemes d'apps mobiles connus (exp://, quotekeeper://) : acceptes sans restriction de domaine
+    - Scheme HTTPS : accepte uniquement pour les hotes en liste blanche
+    - Tout le reste est refuse
+    """
+    if not state:
+        return False
+    try:
+        parsed = urlparse(state)
+        scheme = parsed.scheme.lower()
+
+        if scheme in _SCHEMES_MOBILES_AUTORISES:
+            return bool(parsed.netloc or parsed.path)
+
+        # HTTPS uniquement pour les hotes connus
+        if scheme == "https":
+            return parsed.netloc in _HOTES_HTTPS_AUTORISES
+
+        return False
+    except Exception:
+        return False
+
+
+def _generer_state_csrf() -> str:
+    """
+    Genere un state CSRF signe par HMAC-SHA256 pour le flux OAuth web.
+    Format : <nonce_hex>.<signature_hex>
+    Previent les attaques CSRF sur le callback OAuth.
+    """
+    nonce = secrets.token_hex(16)
+    sig = hmac.new(CLE_SECRETE.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    return f"{nonce}.{sig}"
+
+
+def _state_csrf_valide(state: str) -> bool:
+    """
+    Verifie la signature HMAC-SHA256 du state CSRF.
+    Utilise compare_digest pour eviter les attaques temporelles.
+    """
+    if not state or "." not in state:
+        return False
+    nonce, _, sig = state.partition(".")
+    if not nonce or not sig:
+        return False
+    sig_attendue = hmac.new(CLE_SECRETE.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, sig_attendue)
 
 
 class DemandeCodeGoogleMobile(BaseModel):
@@ -78,10 +145,11 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 # Secret confidentiel de l'application — ne doit jamais etre expose au frontend
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
-# URI de redirection enregistree dans Google Cloud Console
-# Doit correspondre exactement a celle configuree dans la console Google,
-# sinon Google refuse avec "redirect_uri_mismatch"
+# URI de redirection web (navigateur desktop)
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+
+# URI de redirection mobile (le navigateur du telephone doit pouvoir atteindre cette URL)
+GOOGLE_REDIRECT_URI_MOBILE = os.getenv("GOOGLE_REDIRECT_URI_MOBILE", GOOGLE_REDIRECT_URI)
 
 # URL du frontend pour les redirections finales apres authentification
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5500")
@@ -123,18 +191,23 @@ async def connexion_google(mobile_return: Optional[str] = Query(None)):
         return RedirectResponse(url=f"{FRONTEND_URL}?google_error=non_configure")
 
     # Construction des parametres de l'URL de consentement Google
+    # Utilise l'URI mobile si mobile_return est present, sinon l'URI web
+    redirect_uri_actuel = GOOGLE_REDIRECT_URI_MOBILE if mobile_return else GOOGLE_REDIRECT_URI
     params = {
         "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "redirect_uri": redirect_uri_actuel,
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
         "prompt": "select_account",
     }
 
-    # Encode mobile_return dans le state pour le recuperer dans le callback
+    # Encode mobile_return dans le state pour le recuperer dans le callback.
+    # Pour le flux web, genere un nonce CSRF signe pour prevenir les attaques CSRF.
     if mobile_return:
         params["state"] = mobile_return
+    else:
+        params["state"] = _generer_state_csrf()
 
     # Redirection HTTP 307 vers Google — le navigateur suit automatiquement
     return RedirectResponse(url=f"{URL_OAUTH_GOOGLE}?{urlencode(params)}")
@@ -166,10 +239,17 @@ async def callback_google(code: str = None, error: str = None, state: str = None
       5. Generation du JWT QuoteKeeper
       6. Redirection vers le frontend avec le token dans l'URL
     """
-    # Determine si la requete vient du mobile (state = mobile_return URL)
-    est_mobile = bool(state and state.startswith("https://"))
+    # Determine si la requete vient du mobile (state = URL mobile valide)
+    est_mobile = _state_est_valide(state)
 
-    # ── 0. Gestion du refus ou de l'erreur ───────────────────────────────────
+    # ── 0a. Verification CSRF pour le flux web ────────────────────────────────
+    # Pour le flux mobile, le state est l'URL de retour (validee par _state_est_valide).
+    # Pour le flux web, le state doit etre un nonce CSRF signe.
+    if not est_mobile and not _state_csrf_valide(state):
+        print(f"[Google OAuth] State CSRF invalide ou absent")
+        return RedirectResponse(url=f"{FRONTEND_URL}?google_error=csrf_invalide")
+
+    # ── 0b. Gestion du refus ou de l'erreur ──────────────────────────────────
     if error or not code:
         print(f"[Google OAuth] Acces refuse ou erreur : {error}")
         cible_erreur = f"{state}?google_error=acces_refuse" if est_mobile else f"{FRONTEND_URL}?google_error=acces_refuse"
@@ -179,15 +259,17 @@ async def callback_google(code: str = None, error: str = None, state: str = None
     # Appel HTTP POST de serveur a serveur — le navigateur n'est pas implique.
     # Le client_secret est inclus ici (jamais expose au frontend).
     # Le code est a usage unique : une seconde tentative serait refusee par Google.
+    # L'URI utilisee dans l'echange doit etre identique a celle du flux initial
+    redirect_uri_echange = GOOGLE_REDIRECT_URI_MOBILE if est_mobile else GOOGLE_REDIRECT_URI
     try:
         reponse_token = requests.post(
             URL_TOKEN_GOOGLE,
             data={
-                "code": code,                          # Code ephemere recu de Google
-                "client_id": GOOGLE_CLIENT_ID,         # Identifiant public de l'app
-                "client_secret": GOOGLE_CLIENT_SECRET, # Secret confidentiel (serveur uniquement)
-                "redirect_uri": GOOGLE_REDIRECT_URI,   # Doit correspondre exactement a celui enregistre
-                "grant_type": "authorization_code",    # Type de flux OAuth utilise
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri_echange,
+                "grant_type": "authorization_code",
             },
             timeout=10,  # Timeout de 10 secondes pour eviter de bloquer indefiniment
         )
@@ -216,6 +298,11 @@ async def callback_google(code: str = None, error: str = None, state: str = None
         print(f"[Google OAuth] Erreur lors de la recuperation du profil : {exc}")
         return RedirectResponse(url=f"{FRONTEND_URL}?google_error=profil_inaccessible")
 
+    # Verifie que l'email a bien ete verifie par Google (flux web)
+    if not profil.get("email_verified"):
+        print(f"[Google OAuth] Email non verifie par Google")
+        return RedirectResponse(url=f"{FRONTEND_URL}?google_error=email_non_verifie")
+
     # Extraction des champs utiles du profil Google
     # "sub" est l'identifiant stable et unique de l'utilisateur chez Google
     # (contrairement a l'email qui peut changer)
@@ -234,10 +321,12 @@ async def callback_google(code: str = None, error: str = None, state: str = None
         utilisateur = upsert_demo_user(identifiant_demo, nom, email)
         jeton = creer_jeton_acces({"sub": utilisateur["id"], "email": email})
         print(f"[Google OAuth] Connexion demo pour {email}")
-        # Redirection vers le frontend avec toutes les informations de session dans l'URL
-        return RedirectResponse(
-            url=f"{FRONTEND_URL}?token={jeton}&nom={nom}&user_id={utilisateur['id']}&email={email}"
+        reponse = RedirectResponse(url=f"{FRONTEND_URL}?google_ok=1")
+        reponse.set_cookie(
+            key="qk_token", value=jeton, httponly=True, samesite="strict",
+            max_age=60 * DUREE_EXPIRATION_JETON_MINUTES,
         )
+        return reponse
 
     # ── 3b. Mode normal : upsert atomique dans MongoDB ────────────────────────
     # Recherche par google_id OU par email pour gerer deux cas :
@@ -281,12 +370,16 @@ async def callback_google(code: str = None, error: str = None, state: str = None
     print(f"[Google OAuth] Connexion reussie pour {email}")
 
     # ── 4. Redirection finale ────────────────────────────────────────────────
-    # Mobile : redirige vers mobile_return (state) pour que WebBrowser l'intercepte
-    # Web    : redirige vers FRONTEND_URL (comportement classique)
-    params_retour = f"token={jeton}&nom={nom}&user_id={user_id}&email={email}"
+    # Mobile : token dans query string (?token=...) — intercepte par WebBrowser
+    # Web    : cookie httpOnly defini, redirection vers ?google_ok=1 (pas de token en URL)
     if est_mobile and state:
-        return RedirectResponse(url=f"{state}?{params_retour}")
-    return RedirectResponse(url=f"{FRONTEND_URL}?{params_retour}")
+        return RedirectResponse(url=f"{state}?token={jeton}")
+    reponse = RedirectResponse(url=f"{FRONTEND_URL}?google_ok=1")
+    reponse.set_cookie(
+        key="qk_token", value=jeton, httponly=True, samesite="strict",
+        max_age=60 * DUREE_EXPIRATION_JETON_MINUTES,
+    )
+    return reponse
 
 
 @router.post("/google/mobile", summary="Connexion Google pour mobile (authorization code)")
@@ -325,22 +418,24 @@ async def connexion_google_mobile(corps: DemandeCodeGoogleMobile):
         print(f"[Google Mobile] Erreur echange code : {exc}")
         raise HTTPException(status_code=401, detail="Code Google invalide ou expire")
 
-    # ── 2. Verification du ID token retourne par Google ───────────────────────
+    # ── 2. Verification locale du ID token via les cles publiques Google ────────
+    # google-auth telecharge et met en cache les cles JWKS de Google, verifie la
+    # signature RSA, l'expiration et l'audience (aud == GOOGLE_CLIENT_ID).
+    # Plus securise et plus rapide que l'endpoint tokeninfo (appel reseau redondant).
     id_token = tokens.get("id_token")
     if not id_token:
         raise HTTPException(status_code=401, detail="Token Google invalide (id_token absent)")
 
     try:
-        reponse_info = requests.get(
-            "https://oauth2.googleapis.com/tokeninfo",
-            params={"id_token": id_token},
-            timeout=10,
-        )
-        reponse_info.raise_for_status()
-        info = reponse_info.json()
-    except Exception as exc:
-        print(f"[Google Mobile] Erreur verification token : {exc}")
+        _req = google_requests.Request()
+        info = google_id_token.verify_oauth2_token(id_token, _req, GOOGLE_CLIENT_ID)
+    except ValueError as exc:
+        print(f"[Google Mobile] Token invalide : {exc}")
         raise HTTPException(status_code=401, detail="Token Google invalide")
+
+    # Verifie que l'email a bien ete verifie par Google
+    if not info.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Email Google non verifie")
 
     # ── 3. Extraction du profil Google ───────────────────────────────────────
     google_id = info.get("sub")

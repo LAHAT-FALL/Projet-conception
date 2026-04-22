@@ -2,35 +2,42 @@
 Routes REST de gestion des citations et des favoris.
 
 Ce module expose les endpoints suivants :
-- GET  /random              : citation aleatoire (avec filtres optionnels auteur/categorie)
-- GET  /daily               : citation du jour (meme citation pour tous toute la journee)
-- GET  /translate           : traduction d'une citation en francais (MyMemory)
-- GET  /favorites           : liste des citations favorites de l'utilisateur
-- POST /favorites/{id}      : ajout d'une citation aux favoris
-- PATCH /favorites/{id}/note: modification de la note personnelle sur un favori
-- DELETE /favorites/{id}    : retrait d'une citation des favoris
+- GET  /random                   : citation aleatoire (filtres optionnels auteur/categorie)
+- GET  /daily                    : citation du jour (meme citation pour tous toute la journee)
+- GET  /translate                : traduction d'une citation en francais (MyMemory)
+- GET  /favorites                : liste des citations favorites de l'utilisateur
+- POST /favorites/{id}           : ajout d'une citation aux favoris
+- PATCH /favorites/{id}/note     : modification de la note personnelle sur un favori
+- PATCH /favorites/{id}/tag      : modification du tag personnalise sur un favori
+- DELETE /favorites/{id}         : retrait d'une citation des favoris
 
 Toutes les routes sont protegees par JWT (Bearer token obligatoire).
 """
 
 import hashlib
+import html
 import os
 import random
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 import requests
 from bson import ObjectId
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel, Field, field_validator
 
-from app.auth import verifier_jeton
+# Pattern valide pour un identifiant de citation genere par construire_identifiant_citation()
+_PATTERN_QUOTE_ID = re.compile(r"^quote_[a-f0-9]{16}$")
+
 from app.database import obtenir_collection_citations, obtenir_collection_utilisateurs
+from app.dependencies import obtenir_utilisateur_courant
 from app.demo_store import (
     add_demo_favorite,
     get_demo_user_by_id,
     remove_demo_favorite,
     update_demo_favorite_note,
+    update_demo_favorite_tag,
 )
 
 router = APIRouter()
@@ -38,8 +45,21 @@ router = APIRouter()
 # Cle API Ninjas lue depuis le fichier .env
 CLE_API_NINJAS = os.getenv("NINJAS_API_KEY")
 
-# URL du service externe de citations API Ninjas
-URL_API_NINJAS = "https://api.api-ninjas.com/v2/randomquotes"
+# URLs du service externe de citations API Ninjas (v2)
+# /v2/quotes       : filtre par categories/author, ordre deterministe — utilise quand un filtre est actif
+# /v2/randomquotes : aucun filtre, retourne une citation vraiment aleatoire
+# /v2/quoteoftheday : meme citation pour tous pendant 24h
+URL_API_NINJAS_QUOTES = "https://api.api-ninjas.com/v2/quotes"
+URL_API_NINJAS_RANDOM = "https://api.api-ninjas.com/v2/randomquotes"
+URL_API_NINJAS_DAILY = "https://api.api-ninjas.com/v2/quoteoftheday"
+
+# Categories acceptees par l'API Ninjas v2 (toute autre valeur est ignoree)
+CATEGORIES_V2_VALIDES = {
+    "wisdom", "philosophy", "life", "truth", "inspirational",
+    "relationships", "love", "faith", "humor", "success",
+    "courage", "happiness", "art", "writing", "fear",
+    "nature", "time", "freedom", "death", "leadership",
+}
 
 # URL du service de traduction MyMemory (gratuit, sans cle API)
 URL_MYMEMORY = "https://api.mymemory.translated.net/get"
@@ -66,6 +86,7 @@ class ReponseCitation(BaseModel):
     author: str
     category: Optional[str] = None
     note: Optional[str] = None
+    tag: Optional[str] = None
 
 
 class ReponseFavoris(BaseModel):
@@ -102,117 +123,57 @@ class DonneesNote(BaseModel):
 
     La note peut etre vide (chaine vide) pour effacer une note existante.
     Limitee a 500 caracteres pour eviter les abus.
+    Le contenu est echappe pour prevenir les injections XSS.
     """
     note: str = Field(default="", max_length=500)
 
-
-# Liste de citations de secours utilisee quand API Ninjas est indisponible.
-# Garantit que l'application reste fonctionnelle meme sans connexion internet.
-CITATIONS_SECOURS = [
-    # life
-    {"text": "La vie est un mystere qu'il faut vivre, et non un probleme a resoudre.", "author": "Gandhi", "category": "life"},
-    {"text": "La vie, ce n'est pas d'attendre que les orages passent, c'est d'apprendre a danser sous la pluie.", "author": "Seneque", "category": "life"},
-    {"text": "Carpe diem, quam minimum credula postero.", "author": "Horace", "category": "life"},
-    {"text": "Life is what happens when you're busy making other plans.", "author": "John Lennon", "category": "life"},
-    {"text": "In the end, it's not the years in your life that count. It's the life in your years.", "author": "Abraham Lincoln", "category": "life"},
-    # success
-    {"text": "Le succes, c'est d'aller d'echec en echec sans perdre son enthousiasme.", "author": "Winston Churchill", "category": "success"},
-    {"text": "Le plus grand risque est de ne prendre aucun risque.", "author": "Mark Zuckerberg", "category": "success"},
-    {"text": "Success is not final, failure is not fatal: it is the courage to continue that counts.", "author": "Winston Churchill", "category": "success"},
-    {"text": "The secret of success is to do the common thing uncommonly well.", "author": "John D. Rockefeller", "category": "success"},
-    # inspirational
-    {"text": "Le seul veritable voyage est celui qu'on fait au-dedans de soi.", "author": "Marcel Proust", "category": "inspirational"},
-    {"text": "Vis comme si tu devais mourir demain. Apprends comme si tu devais vivre toujours.", "author": "Mahatma Gandhi", "category": "inspirational"},
-    {"text": "The only way to do great work is to love what you do.", "author": "Steve Jobs", "category": "inspirational"},
-    {"text": "Believe you can and you're halfway there.", "author": "Theodore Roosevelt", "category": "inspirational"},
-    # happiness
-    {"text": "Le bonheur est parfois cache dans l'inconnu.", "author": "Victor Hugo", "category": "happiness"},
-    {"text": "Happiness is not something ready-made. It comes from your own actions.", "author": "Dalai Lama", "category": "happiness"},
-    {"text": "The most important thing is to enjoy your life — to be happy — it's all that matters.", "author": "Audrey Hepburn", "category": "happiness"},
-    # wisdom
-    {"text": "Agis avec bonte, mais n'attends pas de reconnaissance.", "author": "Confucius", "category": "wisdom"},
-    {"text": "Connais-toi toi-meme.", "author": "Socrate", "category": "wisdom"},
-    {"text": "The fool doth think he is wise, but the wise man knows himself to be a fool.", "author": "William Shakespeare", "category": "wisdom"},
-    {"text": "Yesterday I was clever, so I wanted to change the world. Today I am wise, so I am changing myself.", "author": "Rumi", "category": "wisdom"},
-    # knowledge
-    {"text": "Savoir s'etonner est le premier pas du coeur vers la decouverte.", "author": "Louis Pasteur", "category": "knowledge"},
-    {"text": "Le savoir est la seule richesse qui ne peut nous etre volee.", "author": "Socrate", "category": "knowledge"},
-    {"text": "Je pense, donc je suis.", "author": "Rene Descartes", "category": "knowledge"},
-    {"text": "L'imagination est plus importante que le savoir.", "author": "Albert Einstein", "category": "knowledge"},
-    {"text": "An investment in knowledge pays the best interest.", "author": "Benjamin Franklin", "category": "knowledge"},
-    {"text": "The more that you read, the more things you will know.", "author": "Dr. Seuss", "category": "knowledge"},
-    # art
-    {"text": "La simplicite est la sophistication supreme.", "author": "Leonardo da Vinci", "category": "art"},
-    {"text": "Every artist was first an amateur.", "author": "Ralph Waldo Emerson", "category": "art"},
-    {"text": "Art enables us to find ourselves and lose ourselves at the same time.", "author": "Thomas Merton", "category": "art"},
-    # love
-    {"text": "Aimer, c'est trouver sa richesse hors de soi.", "author": "Alain", "category": "love"},
-    {"text": "On n'aime bien qu'une seule fois, c'est la premiere.", "author": "La Bruyere", "category": "love"},
-    {"text": "The best thing to hold onto in life is each other.", "author": "Audrey Hepburn", "category": "love"},
-    {"text": "Where there is love there is life.", "author": "Mahatma Gandhi", "category": "love"},
-    # courage
-    {"text": "Le courage, c'est de chercher la verite et de la dire.", "author": "Jean Jaures", "category": "courage"},
-    {"text": "La bravure, c'est la peur qui a dit ses prieres.", "author": "Dorothy Bernard", "category": "courage"},
-    {"text": "Courage is not the absence of fear, but acting in spite of it.", "author": "Mark Twain", "category": "courage"},
-    {"text": "It takes courage to grow up and become who you really are.", "author": "E.E. Cummings", "category": "courage"},
-    # friendship
-    {"text": "L'amitie double les joies et divise les peines.", "author": "Francis Bacon", "category": "friendship"},
-    {"text": "Un ami, c'est quelqu'un qui vous connait bien et qui vous aime quand meme.", "author": "Elbert Hubbard", "category": "friendship"},
-    {"text": "A real friend is one who walks in when the rest of the world walks out.", "author": "Walter Winchell", "category": "friendship"},
-    {"text": "Friendship is the only cement that will ever hold the world together.", "author": "Woodrow Wilson", "category": "friendship"},
-    # faith
-    {"text": "La foi, c'est monter le premier pas meme quand on ne voit pas l'escalier.", "author": "Martin Luther King", "category": "faith"},
-    {"text": "Faith is taking the first step even when you don't see the whole staircase.", "author": "Martin Luther King", "category": "faith"},
-    # nature
-    {"text": "La nature est le seul livre qui offre un contenu precieux sur toutes ses pages.", "author": "Goethe", "category": "nature"},
-    {"text": "Look deep into nature, and then you will understand everything better.", "author": "Albert Einstein", "category": "nature"},
-    {"text": "In every walk with nature, one receives far more than he seeks.", "author": "John Muir", "category": "nature"},
-    # leadership
-    {"text": "Le leadership, c'est l'art de faire faire aux autres ce que vous voulez.", "author": "Dwight D. Eisenhower", "category": "leadership"},
-    {"text": "A leader is one who knows the way, goes the way, and shows the way.", "author": "John C. Maxwell", "category": "leadership"},
-    {"text": "Leadership is not about being in charge. It is about taking care of those in your charge.", "author": "Simon Sinek", "category": "leadership"},
-    # education
-    {"text": "L'education est l'arme la plus puissante pour changer le monde.", "author": "Nelson Mandela", "category": "education"},
-    {"text": "Education is not the filling of a pail, but the lighting of a fire.", "author": "W.B. Yeats", "category": "education"},
-    {"text": "The roots of education are bitter, but the fruit is sweet.", "author": "Aristotle", "category": "education"},
-    # funny
-    {"text": "I am so clever that sometimes I don't understand a single word of what I am saying.", "author": "Oscar Wilde", "category": "funny"},
-    {"text": "People say nothing is impossible, but I do nothing every day.", "author": "A.A. Milne", "category": "funny"},
-]
+    @field_validator("note")
+    @classmethod
+    def sanitiser_note(cls, valeur: str) -> str:
+        """Echappe les caracteres HTML pour prevenir le stockage de contenu XSS."""
+        return html.escape(valeur.strip())
 
 
-async def obtenir_utilisateur_courant(authorization: Optional[str] = Header(None)):
+def piocher_citation_depuis_mongodb(
+    author: Optional[str] = None,
+    category: Optional[str] = None,
+) -> Optional[dict]:
     """
-    Dependance FastAPI : extrait et valide le token JWT du header Authorization.
+    Pioche une citation aleatoire dans la collection MongoDB 'quotes'.
+    Utilise $sample pour eviter tout biais de selection.
 
-    Format attendu dans la requete HTTP :
-        Authorization: Bearer <token_jwt>
+    Filtres optionnels (appliques uniquement s'ils sont fournis) :
+    - author   : recherche insensible a la casse sur le champ author
+    - category : correspondance exacte sur le champ category
 
-    Retourne l'identifiant utilisateur (sub) si le token est valide.
-    Leve HTTP 401 dans tous les autres cas (absent, mal forme, expire).
+    Retourne un dict normalise {id, text, author, category} ou None si la
+    collection est vide ou si aucun document ne correspond aux filtres.
     """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token d'authentification manquant",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    collection = obtenir_collection_citations()
+    if collection is None:
+        return None
 
-    morceaux = authorization.split()
-    if len(morceaux) != 2 or morceaux[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Format de token invalide. Utilisez 'Bearer <token>'",
-        )
+    filtre: dict = {}
+    if author:
+        filtre["author"] = {"$regex": author.strip(), "$options": "i"}
+    if category:
+        filtre["category"] = category.lower().strip()
 
-    identifiant_utilisateur = verifier_jeton(morceaux[1])
-    if not identifiant_utilisateur:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide ou expire",
-        )
+    # Relaxation progressive : si le filtre combine ne donne rien, on retire
+    # la categorie pour ne pas renvoyer une erreur sur un auteur valide.
+    for tentative in [filtre, {"author": filtre["author"]} if author else None, {}]:
+        if tentative is None:
+            continue
+        resultats = list(collection.aggregate([
+            {"$match": tentative},
+            {"$sample": {"size": 1}},
+        ]))
+        if resultats:
+            doc = resultats[0]
+            return normaliser_citation(doc["text"], doc["author"], doc.get("category"))
 
-    return identifiant_utilisateur
+    return None
+
 
 
 def construire_identifiant_citation(texte: str, auteur: str, categorie: Optional[str] = None) -> str:
@@ -262,9 +223,9 @@ def reconstruire_citations_favorites(
     for identifiant_citation in identifiants_favoris:
         citation = citations_stockees.get(identifiant_citation) or citations_embarquees.get(identifiant_citation)
         if citation:
-            # Le champ 'note' vient du document utilisateur (inline), pas de la collection quotes
-            note = citations_embarquees.get(identifiant_citation, {}).get("note")
-            donnees = {**citation, "note": note}
+            # 'note' et 'tag' viennent du document utilisateur (inline), pas de la collection quotes
+            inline = citations_embarquees.get(identifiant_citation, {})
+            donnees = {**citation, "note": inline.get("note"), "tag": inline.get("tag")}
             resultat.append(ReponseCitation(**donnees))
 
     return resultat
@@ -311,63 +272,6 @@ def persister_citation_si_possible(citation: dict):
     )
 
 
-def seeder_citations_secours():
-    """
-    Insere les CITATIONS_SECOURS dans MongoDB si la collection est vide.
-    Appele au demarrage pour garantir un pool de fallback persistant.
-    """
-    collection_citations = obtenir_collection_citations()
-    if collection_citations is None:
-        return
-
-    if collection_citations.count_documents({}) == 0:
-        print("[Citations] Collection vide — insertion des citations de secours initiales")
-        for c in CITATIONS_SECOURS:
-            citation = normaliser_citation(c["text"], c["author"], c.get("category", "general"))
-            persister_citation_si_possible(citation)
-        print(f"[Citations] {len(CITATIONS_SECOURS)} citations inserees en base")
-
-
-def charger_citation_aleatoire_depuis_mongodb(
-    category: Optional[str] = None,
-    author: Optional[str] = None,
-) -> Optional[dict]:
-    """
-    Recupere une citation aleatoire depuis MongoDB via $sample.
-
-    Applique les filtres categorie et auteur si fournis.
-    Retourne None si aucun resultat ou si MongoDB est indisponible.
-    Ne fait PAS de retry sans filtres : l'absence de resultat est signalee
-    au code appelant pour qu'il retourne une erreur appropriee.
-    """
-    collection_citations = obtenir_collection_citations()
-    if collection_citations is None:
-        return None
-
-    filtre: dict = {}
-    if category:
-        filtre["category"] = category.lower().strip()
-    if author:
-        filtre["author"] = {"$regex": author.strip(), "$options": "i"}
-
-    pipeline = []
-    if filtre:
-        pipeline.append({"$match": filtre})
-    pipeline.append({"$sample": {"size": 1}})
-
-    resultats = list(collection_citations.aggregate(pipeline))
-    if not resultats:
-        return None
-
-    doc = resultats[0]
-    return {
-        "id": doc["id"],
-        "text": doc["text"],
-        "author": doc["author"],
-        "category": doc.get("category", "general"),
-    }
-
-
 @router.get(
     "/random",
     response_model=ReponseCitation,
@@ -386,22 +290,37 @@ async def obtenir_citation_aleatoire(
     - author   : filtrer par auteur (recherche partielle)
 
     Strategie :
-    1. API Ninjas (si cle configuree) → citation persistee en MongoDB
-    2. MongoDB (pool accumule) → citation aleatoire avec filtres
-    3. CITATIONS_SECOURS (liste locale) → dernier recours
+    1. Si la cle API Ninjas est configuree, appel au service externe avec les filtres
+    2. Si l'appel echoue ou la cle est absente, citation aleatoire depuis MongoDB
+       (filtres author/category appliques via $sample + $match)
     """
     print(f"[Citations] Generation de citation pour l'utilisateur {utilisateur_id} (category={category}, author={author})")
 
     if CLE_API_NINJAS:
         try:
+            # La categorie n'est envoyee que si elle fait partie des 20 valeurs valides v2.
             params_ninjas = {}
-            if category:
-                params_ninjas["categories"] = category.lower().strip()
+            categorie_normalisee = category.lower().strip() if category else None
+            if categorie_normalisee and categorie_normalisee in CATEGORIES_V2_VALIDES:
+                params_ninjas["categories"] = categorie_normalisee
+            elif category:
+                print(f"[Citations] Categorie ignoree (non valide pour v2) : {category!r}")
             if author:
                 params_ninjas["author"] = author.strip()
 
+            # /v2/quotes supporte les filtres (categories, author) et retourne une liste
+            # dans un ordre deterministe. On ajoute un offset aleatoire + limit=10 pour
+            # varier les resultats a chaque appel sur le meme filtre.
+            # /v2/randomquotes est utilise uniquement sans filtre (vraiment aleatoire).
+            if params_ninjas:
+                url_ninjas = URL_API_NINJAS_QUOTES
+                params_ninjas["limit"] = 10
+                params_ninjas["offset"] = random.randint(0, 99)
+            else:
+                url_ninjas = URL_API_NINJAS_RANDOM
+
             reponse = requests.get(
-                URL_API_NINJAS,
+                url_ninjas,
                 headers={"X-Api-Key": CLE_API_NINJAS},
                 params=params_ninjas,
                 timeout=5,
@@ -409,51 +328,58 @@ async def obtenir_citation_aleatoire(
 
             if reponse.status_code == 200:
                 donnees = reponse.json()
-                if donnees:
-                    auteur_retourne = donnees[0]["author"]
-                    # v2/randomquotes retourne "categories" comme tableau
-                    categories_retournees = donnees[0].get("categories", [])
+                # Si l'offset depasse le total, l'API retourne une liste vide.
+                # On relance avec offset=0 pour garantir un resultat.
+                if isinstance(donnees, list) and not donnees and params_ninjas.get("offset", 0) > 0:
+                    params_ninjas["offset"] = 0
+                    reponse = requests.get(
+                        url_ninjas,
+                        headers={"X-Api-Key": CLE_API_NINJAS},
+                        params=params_ninjas,
+                        timeout=5,
+                    )
+                    donnees = reponse.json() if reponse.status_code == 200 else []
 
-                    # Validation auteur
-                    auteur_invalide = author and author.lower().strip() not in auteur_retourne.lower()
-                    # Validation categorie : la categorie demandee doit etre dans le tableau
-                    categorie_invalide = category and category.lower().strip() not in [c.lower() for c in categories_retournees]
+                # /v2/quotes retourne une liste — on choisit un element aleatoire.
+                # /v2/randomquotes peut retourner une liste ou un objet unique.
+                if isinstance(donnees, list) and donnees:
+                    item = random.choice(donnees)
+                elif isinstance(donnees, dict) and donnees.get("quote"):
+                    item = donnees
+                else:
+                    item = None
+                if item and item.get("quote"):
+                    citation = normaliser_citation(
+                        texte=item["quote"],
+                        auteur=item.get("author", "Auteur inconnu"),
+                        categorie=item.get("category", categorie_normalisee or "general"),
+                    )
+                    # Si un auteur est demande, verifier que la reponse correspond.
+                    # L'API peut ignorer le filtre author quand categories est aussi present.
+                    auteur_retourne = citation["author"].lower()
+                    auteur_demande = author.lower().strip() if author else None
+                    if auteur_demande and auteur_demande not in auteur_retourne:
+                        citation_db = piocher_citation_depuis_mongodb(author=author, category=categorie_normalisee)
+                        if citation_db:
+                            return ReponseCitation(**citation_db)
 
-                    if auteur_invalide:
-                        print(f"[Citations] Rejet API Ninjas — auteur {auteur_retourne!r} != filtre {author!r}")
-                    elif categorie_invalide:
-                        print(f"[Citations] Rejet API Ninjas — categories {categories_retournees!r} ne contient pas {category!r}")
-                    else:
-                        citation = normaliser_citation(
-                            texte=donnees[0]["quote"],
-                            auteur=auteur_retourne,
-                            categorie=category or (categories_retournees[0] if categories_retournees else "general"),
-                        )
-                        persister_citation_si_possible(citation)
-                        return ReponseCitation(**citation)
+                    persister_citation_si_possible(citation)
+                    return ReponseCitation(**citation)
 
-            print(f"[Citations] API Ninjas a retourne {reponse.status_code} - params={params_ninjas} - body={reponse.text}")
+            print(f"[Citations] API Ninjas a retourne {reponse.status_code}")
 
         except Exception as exc:
             print(f"[Citations] Erreur API Ninjas: {exc}")
 
-    # Fallback : MongoDB (citations accumulees), avec les memes filtres
-    citation_db = charger_citation_aleatoire_depuis_mongodb(category, author)
+    # Fallback MongoDB : pioche une citation aleatoire dans la collection
+    citation_db = piocher_citation_depuis_mongodb(author=author, category=category)
     if citation_db:
-        print(f"[Citations] Fallback MongoDB utilise (category={category}, author={author})")
         return ReponseCitation(**citation_db)
 
-    # Aucun resultat avec filtre auteur : on retourne une erreur explicite
-    if author:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Aucune citation de l\'auteur "{author}" n\'a été trouvée.',
-        )
-
-    # Sans filtre et sans MongoDB : dernier recours sur la liste locale
-    print("[Citations] Fallback local utilise (aucun filtre, MongoDB indisponible)")
-    citation = random.choice(CITATIONS_SECOURS)
-    return ReponseCitation(**normaliser_citation(citation["text"], citation["author"], citation.get("category") or "general"))
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Service de citations indisponible et aucune citation en base de donnees.",
+    )
 
 
 @router.get(
@@ -467,8 +393,7 @@ async def obtenir_citation_du_jour(utilisateur_id: str = Depends(obtenir_utilisa
 
     Strategie de cache :
     - En mode API Ninjas : appel une seule fois par jour, resultat mis en cache memoire
-    - En mode fallback : selection deterministe basee sur le numero du jour calendaire
-      (ex: 20260329 % 15 = index dans CITATIONS_SECOURS)
+    - En mode fallback : citation aleatoire piochee dans la collection MongoDB
 
     Le cache est reinitialise au redemarrage du serveur.
     """
@@ -483,17 +408,19 @@ async def obtenir_citation_du_jour(utilisateur_id: str = Depends(obtenir_utilisa
     if CLE_API_NINJAS:
         try:
             reponse = requests.get(
-                URL_API_NINJAS,
+                URL_API_NINJAS_DAILY,
                 headers={"X-Api-Key": CLE_API_NINJAS},
                 timeout=5,
             )
             if reponse.status_code == 200:
                 donnees = reponse.json()
-                if donnees:
+                # v2 peut retourner une liste ou un objet unique
+                item = donnees[0] if isinstance(donnees, list) else donnees
+                if item and item.get("quote"):
                     citation = normaliser_citation(
-                        texte=donnees[0]["quote"],
-                        auteur=donnees[0]["author"],
-                        categorie=donnees[0].get("category", "general"),
+                        texte=item["quote"],
+                        auteur=item.get("author", "Auteur inconnu"),
+                        categorie=item.get("category", "general"),
                     )
                     persister_citation_si_possible(citation)
                     _cache_citation_jour = {"date": aujourd_hui, "citation": citation}
@@ -501,22 +428,16 @@ async def obtenir_citation_du_jour(utilisateur_id: str = Depends(obtenir_utilisa
         except Exception as exc:
             print(f"[Citations] Erreur API Ninjas pour citation du jour: {exc}")
 
-    # Fallback 1 : MongoDB
-    citation_db = charger_citation_aleatoire_depuis_mongodb()
+    # Fallback MongoDB : pioche une citation aleatoire dans la collection
+    citation_db = piocher_citation_depuis_mongodb()
     if citation_db:
-        print("[Citations] Citation du jour depuis MongoDB")
         _cache_citation_jour = {"date": aujourd_hui, "citation": citation_db}
         return ReponseCitation(**citation_db)
 
-    # Fallback 2 : liste locale, selection deterministe par date
-    numero_jour = int(aujourd_hui.replace("-", "")) % len(CITATIONS_SECOURS)
-    citation_fallback = normaliser_citation(
-        CITATIONS_SECOURS[numero_jour]["text"],
-        CITATIONS_SECOURS[numero_jour]["author"],
-        CITATIONS_SECOURS[numero_jour].get("category", "general"),
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Service de citations indisponible et aucune citation en base de donnees.",
     )
-    _cache_citation_jour = {"date": aujourd_hui, "citation": citation_fallback}
-    return ReponseCitation(**citation_fallback)
 
 
 @router.get(
@@ -544,6 +465,13 @@ async def traduire_citation(
         )
 
     texte_propre = texte.strip()
+
+    # MyMemory refuse les textes > 500 caracteres
+    if len(texte_propre) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Texte trop long pour la traduction ({len(texte_propre)} caracteres, max 500). Raccourcissez la citation.",
+        )
 
     try:
         reponse = requests.get(
@@ -601,6 +529,12 @@ async def ajouter_aux_favoris(
     Le corps de la requete peut contenir les details complets de la citation.
     La citation est egalement persistee dans la collection 'quotes'.
     """
+    # Validation stricte du format de l'ID pour prevenir l'injection NoSQL
+    if not _PATTERN_QUOTE_ID.match(quote_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identifiant de citation invalide",
+        )
     collection_utilisateurs = obtenir_collection_utilisateurs()
 
     if citation is not None:
@@ -617,7 +551,7 @@ async def ajouter_aux_favoris(
             "category": "general",
         }
 
-    citation_preparee["id"] = quote_id if citation is None else citation_preparee["id"]
+    citation_preparee["id"] = quote_id
 
     if collection_utilisateurs is None:
         utilisateur_demo = add_demo_favorite(utilisateur_id, citation_preparee)
@@ -685,6 +619,11 @@ async def modifier_note_favori(
     La note est stockee dans le champ inline 'favorite_quotes.<id>.note'
     du document utilisateur. Une note vide ("") efface la note existante.
     """
+    if not _PATTERN_QUOTE_ID.match(quote_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identifiant de citation invalide",
+        )
     collection_utilisateurs = obtenir_collection_utilisateurs()
 
     # Mode demo : mise a jour dans le stockage en memoire
@@ -739,6 +678,62 @@ async def modifier_note_favori(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur lors de la modification de la note: {exc}",
         )
+
+
+class DonneesTag(BaseModel):
+    tag: str = Field(default="", max_length=50)
+
+
+@router.patch(
+    "/favorites/{quote_id}/tag",
+    summary="Modifier le tag personnalisé d'un favori",
+)
+async def modifier_tag_favori(
+    quote_id: str,
+    donnees: DonneesTag,
+    utilisateur_id: str = Depends(obtenir_utilisateur_courant),
+):
+    """Ajoute, modifie ou supprime le tag personnalisé d'une citation favorite."""
+    if not _PATTERN_QUOTE_ID.match(quote_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identifiant de citation invalide",
+        )
+    collection_utilisateurs = obtenir_collection_utilisateurs()
+
+    if collection_utilisateurs is None:
+        resultat = update_demo_favorite_tag(utilisateur_id, quote_id, donnees.tag)
+        if resultat is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Citation non trouvee dans les favoris",
+            )
+        return {"status": "success", "message": "Tag enregistre (mode demo)"}
+
+    try:
+        utilisateur = collection_utilisateurs.find_one(
+            {"_id": ObjectId(utilisateur_id), f"favorite_quotes.{quote_id}": {"$exists": True}}
+        )
+        if not utilisateur:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Citation non trouvée dans les favoris")
+
+        if donnees.tag:
+            collection_utilisateurs.update_one(
+                {"_id": ObjectId(utilisateur_id)},
+                {"$set": {f"favorite_quotes.{quote_id}.tag": donnees.tag, "modifie_le": datetime.now(timezone.utc)}},
+            )
+        else:
+            collection_utilisateurs.update_one(
+                {"_id": ObjectId(utilisateur_id)},
+                {"$unset": {f"favorite_quotes.{quote_id}.tag": ""}, "$set": {"modifie_le": datetime.now(timezone.utc)}},
+            )
+
+        return {"status": "success", "message": "Tag enregistré"}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
 
 @router.get(
@@ -813,6 +808,11 @@ async def retirer_des_favoris(
     Supprime l'ID du tableau favorites et les details de favorite_quotes.
     Operation idempotente : pas d'erreur si la citation n'etait pas dans les favoris.
     """
+    if not _PATTERN_QUOTE_ID.match(quote_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identifiant de citation invalide",
+        )
     collection_utilisateurs = obtenir_collection_utilisateurs()
 
     if collection_utilisateurs is None:

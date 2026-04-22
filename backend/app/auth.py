@@ -6,15 +6,17 @@ Ce module centralise :
 - la verification des mots de passe
 - la creation des jetons JWT signes avec HMAC-SHA256
 - la lecture et la validation des jetons JWT
+- la gestion d'une liste noire de jetons revoqués (logout, invalidation)
 
 Securite :
 - PBKDF2-SHA256 est resistant aux attaques par force brute (derive de cle lente)
 - JWT HS256 garantit l'integrite du token sans stocker de session cote serveur
+- L'algorithme est fixe a HS256 — jamais surchargeable par env var (previent algorithm confusion)
 - La cle secrete doit etre longue et aleatoire en production (variable SECRET_KEY)
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 import jwt
@@ -26,13 +28,83 @@ from passlib.context import CryptContext
 contexte_mots_de_passe = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 # Cle secrete lue depuis l'environnement. Ne jamais coder cette valeur en dur.
-CLE_SECRETE = os.getenv("SECRET_KEY", "fallback_secret_key_change_this_in_production")
+# L'application refuse de demarrer si SECRET_KEY est absente ou vide.
+CLE_SECRETE = os.getenv("SECRET_KEY")
+if not CLE_SECRETE:
+    raise RuntimeError(
+        "La variable d'environnement SECRET_KEY est manquante ou vide. "
+        "Generez une cle : python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 
-# Algorithme de signature du JWT : HMAC-SHA256, standard et largement supporte.
-ALGORITHME_JWT = os.getenv("ALGORITHM", "HS256")
+# Algorithme de signature fixe — NE PAS rendre configurable par env var.
+# Une variable d'env permettrait une attaque "algorithm confusion" (algo=none).
+ALGORITHME_JWT = "HS256"
 
-# Duree de vie du token en minutes avant expiration automatique (defaut : 30 min).
-DUREE_EXPIRATION_JETON_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+# Duree de vie du token en minutes avant expiration automatique (defaut : 7 jours).
+DUREE_EXPIRATION_JETON_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LISTE NOIRE DES JETONS REVOQUES
+# ─────────────────────────────────────────────────────────────────────────────
+# Stockage en memoire : suffisant pour un projet academique.
+# En production, utiliser Redis avec TTL = duree d'expiration du token.
+# Format : { jti_ou_token_hash : datetime_expiration }
+_jetons_revoques: Dict[str, datetime] = {}
+
+
+def revoquer_jeton(jeton: str) -> None:
+    """
+    Ajoute un jeton a la liste noire (MongoDB si disponible, sinon memoire).
+    Le jeton sera refuse par verifier_jeton meme s'il est encore dans sa periode de validite.
+    """
+    import hashlib
+    token_hash = hashlib.sha256(jeton.encode()).hexdigest()
+    contenu = decoder_jeton(jeton)
+    if contenu and "exp" in contenu:
+        expiration = datetime.fromtimestamp(contenu["exp"], tz=timezone.utc)
+    else:
+        expiration = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    try:
+        from app.database import obtenir_collection_jetons_revoques
+        col = obtenir_collection_jetons_revoques()
+        if col is not None:
+            col.replace_one(
+                {"_id": token_hash},
+                {"_id": token_hash, "expires_at": expiration},
+                upsert=True,
+            )
+            return
+    except Exception:
+        pass
+
+    # Fallback in-memory
+    _jetons_revoques[token_hash] = expiration
+    _nettoyer_jetons_expires()
+
+
+def _est_jeton_revoquer(jeton: str) -> bool:
+    """Verifie si le jeton figure dans la liste noire (MongoDB ou memoire)."""
+    import hashlib
+    token_hash = hashlib.sha256(jeton.encode()).hexdigest()
+
+    try:
+        from app.database import obtenir_collection_jetons_revoques
+        col = obtenir_collection_jetons_revoques()
+        if col is not None:
+            return col.find_one({"_id": token_hash}) is not None
+    except Exception:
+        pass
+
+    return token_hash in _jetons_revoques
+
+
+def _nettoyer_jetons_expires() -> None:
+    """Supprime les entrees expirees de la liste noire en memoire."""
+    maintenant = datetime.now(timezone.utc)
+    expires = [h for h, exp in _jetons_revoques.items() if exp <= maintenant]
+    for h in expires:
+        del _jetons_revoques[h]
 
 
 def verifier_mot_de_passe(mot_de_passe_en_clair: str, mot_de_passe_hache: str) -> bool:
@@ -71,15 +143,15 @@ def creer_jeton_acces(
     """
     contenu_a_encoder = donnees.copy()
 
-    # Calcul de la date d'expiration : maintenant + duree configuree
-    expiration = datetime.utcnow() + (
+    maintenant = datetime.now(timezone.utc)
+    expiration = maintenant + (
         duree_expiration or timedelta(minutes=DUREE_EXPIRATION_JETON_MINUTES)
     )
 
     # Ajout des claims standards JWT (exp et iat)
-    contenu_a_encoder.update({"exp": expiration, "iat": datetime.utcnow()})
+    contenu_a_encoder.update({"exp": expiration, "iat": maintenant})
 
-    # Encodage et signature du token avec PyJWT
+    # Encodage et signature du token avec PyJWT — algorithme fixe HS256
     return jwt.encode(contenu_a_encoder, CLE_SECRETE, algorithm=ALGORITHME_JWT)
 
 
@@ -90,13 +162,13 @@ def decoder_jeton(jeton: str) -> Optional[Dict]:
     PyJWT verifie automatiquement :
     - la signature (integrite)
     - la date d'expiration (exp)
+    - l'algorithme : seul HS256 est accepte (previent algorithm confusion)
     Retourne None si le token est invalide ou expire.
     """
     try:
+        # algorithms=[ALGORITHME_JWT] est obligatoire : empeche de changer d'algo via le header JWT
         return jwt.decode(jeton, CLE_SECRETE, algorithms=[ALGORITHME_JWT])
-    except JWTError as exc:
-        # Token corrompu, signature incorrecte ou expire
-        print(f"[JWT] Erreur de decodage : {exc}")
+    except JWTError:
         return None
 
 
@@ -104,9 +176,12 @@ def verifier_jeton(jeton: str) -> Optional[str]:
     """
     Valide un jeton JWT et retourne l'identifiant utilisateur (champ 'sub').
 
-    Retourne None si le token est invalide, expire ou ne contient pas de 'sub'.
+    Verifie egalement que le token n'a pas ete revoquer (liste noire).
+    Retourne None si le token est invalide, expire, revoquer ou sans 'sub'.
     Utilise par toutes les routes protegees via Depends(obtenir_utilisateur_courant).
     """
+    if _est_jeton_revoquer(jeton):
+        return None
     contenu = decoder_jeton(jeton)
     if contenu:
         return contenu.get("sub")

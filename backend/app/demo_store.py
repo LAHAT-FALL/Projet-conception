@@ -149,6 +149,24 @@ def update_demo_favorite_note(user_id: str, quote_id: str, note: str):
     return deepcopy(user)
 
 
+def update_demo_favorite_tag(user_id: str, quote_id: str, tag: str):
+    """
+    Ajoute ou modifie le tag personnalise sur un favori en mode demo.
+
+    Retourne le profil mis a jour, ou None si l'utilisateur ou la citation
+    est introuvable dans le stockage demo.
+    """
+    user = DEMO_USERS.get(user_id)
+    if not user:
+        return None
+
+    if quote_id not in user.get("favorite_quotes", {}):
+        return None
+
+    user["favorite_quotes"][quote_id]["tag"] = tag
+    return deepcopy(user)
+
+
 def update_demo_user_profile(user_id: str, nom: str):
     """
     Met a jour le nom d'affichage d'un utilisateur demo.

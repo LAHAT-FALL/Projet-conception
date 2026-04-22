@@ -16,7 +16,24 @@
  */
 
 /** URL de base de l'API backend */
-const URL_API = 'http://localhost:8000/api';
+const URL_API = 'https://localhost:8000/api';
+
+/**
+ * Wrapper fetch avec timeout automatique de 10 secondes.
+ * Lance une erreur lisible si le serveur ne répond pas dans le délai imparti.
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { credentials: 'include', ...options, signal: controller.signal });
+    } catch (err) {
+        if (err.name === 'AbortError') throw new Error('La requête a expiré (timeout 10s). Vérifiez votre connexion.');
+        throw err;
+    } finally {
+        clearTimeout(id);
+    }
+}
 
 /** Utilisateur actuellement connecte (null si deconnecte) */
 let utilisateurCourant = null;
@@ -29,6 +46,12 @@ let favoris = [];
 
 /** Terme de recherche actuel dans la barre de recherche des favoris */
 let rechercheFavoris = '';
+
+/** Historique de la conversation du chatbot IA en cours */
+let historiqueChat = [];
+
+/** Verrou pour eviter les envois simultanes au chatbot */
+let chargementChat = false;
 
 /**
  * Etat de la pagination des favoris.
@@ -48,11 +71,23 @@ let paginationFavoris = { page: 1, parPage: 8 };
 function afficherPage(identifiantPage) {
     document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
     document.getElementById(identifiantPage).classList.add('active');
-    const boutonChat = document.getElementById('boutonChat');
-    if (boutonChat) {
-        identifiantPage === 'pagePrincipale'
-            ? boutonChat.classList.remove('hidden')
-            : boutonChat.classList.add('hidden');
+
+    // Bascule entre le mode portail et le mode authentification
+    const pagesAuth = ['pageConnexion', 'pageInscription', 'pageMotDePasseOublie'];
+    const portalShell = document.getElementById('portalShell');
+    const authWrapper = document.getElementById('authWrapper');
+
+    if (pagesAuth.includes(identifiantPage)) {
+        if (portalShell) portalShell.classList.add('portal-hidden');
+        if (authWrapper) authWrapper.classList.remove('portal-hidden');
+    } else {
+        if (portalShell) portalShell.classList.remove('portal-hidden');
+        if (authWrapper) authWrapper.classList.add('portal-hidden');
+        // Met en evidence l'item de navigation actif dans la barre laterale
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        const navMap = { pagePrincipale: 'navAccueil', pageProfil: 'navProfil', pageChat: 'navChat' };
+        const navId = navMap[identifiantPage];
+        if (navId) document.getElementById(navId)?.classList.add('active');
     }
 }
 
@@ -89,7 +124,7 @@ function basculerTheme() {
  */
 function mettreAJourIconeTheme(theme) {
     const iconeClasse = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
-    document.querySelectorAll('#boutonTheme i, #boutonThemeProfil i').forEach(icone => {
+    document.querySelectorAll('#boutonTheme i, #boutonThemeProfil i, #boutonThemeChat i').forEach(icone => {
         icone.className = iconeClasse;
     });
 }
@@ -138,7 +173,8 @@ function afficherErreur(message) {
     if (!zoneErreur) {
         zoneErreur = document.createElement('div');
         zoneErreur.className = 'error-message';
-        document.querySelector('.container').prepend(zoneErreur);
+        const cible = document.querySelector('.page.active') || document.body;
+        cible.prepend(zoneErreur);
     }
 
     zoneErreur.textContent = message;
@@ -157,15 +193,17 @@ function afficherErreur(message) {
  * Met a jour l'affichage du nom de l'utilisateur dans l'en-tete.
  */
 function mettreAJourAffichageUtilisateur() {
-    // On met a jour uniquement l'element parent via innerHTML.
-    // Ne pas acceder a #nomUtilisateur separement : le premier appel remplace
-    // le innerHTML du parent, ce qui retire l'id="nomUtilisateur" du DOM.
     const zone = document.getElementById('affichageNomUtilisateur');
     if (zone) {
-        zone.innerHTML = `
-            <i class="fas fa-user-circle"></i>
-            <span>${utilisateurCourant.nom}</span>
-        `;
+        // Reconstruction via DOM pour eviter une injection XSS via le nom utilisateur.
+        zone.innerHTML = '';
+        const icone = document.createElement('i');
+        icone.className = 'fas fa-user-circle';
+        const span = document.createElement('span');
+        span.textContent = utilisateurCourant.nom;
+        zone.appendChild(icone);
+        zone.appendChild(document.createTextNode(' '));
+        zone.appendChild(span);
     }
 }
 
@@ -174,7 +212,8 @@ function mettreAJourAffichageUtilisateur() {
  * Le JWT est stateless : la deconnexion est uniquement locale (suppression localStorage).
  */
 function deconnecterUtilisateur() {
-    localStorage.removeItem('token');
+    // Révocation du cookie httpOnly côté serveur (fire-and-forget)
+    fetchWithTimeout(`${URL_API}/auth/logout`, { method: 'POST' }).catch(() => {});
     localStorage.removeItem('user');
 
     utilisateurCourant = null;
@@ -189,7 +228,6 @@ function deconnecterUtilisateur() {
     document.getElementById('boutonAjouterFavori').disabled = true;
     document.getElementById('boutonCopierCitation').disabled = true;
     document.getElementById('boutonTraduire').disabled = true;
-    document.getElementById('boutonExpliquer').disabled = true;
     document.getElementById('zoneTraduction').classList.add('hidden');
     document.getElementById('texteTraduction').textContent = '';
 
@@ -207,6 +245,14 @@ function deconnecterUtilisateur() {
     // Remise a zero du bandeau citation du jour
     const bandeau = document.getElementById('citationDuJour');
     if (bandeau) bandeau.innerHTML = '<span class="daily-loading"><i class="fas fa-spinner fa-spin"></i></span>';
+
+    // Remise a zero du chat IA
+    historiqueChat = [];
+    chargementChat = false;
+    const zoneChat = document.getElementById('chatMessages');
+    if (zoneChat) zoneChat.innerHTML = '';
+    const actionsRapides = document.getElementById('chatActionsRapides');
+    if (actionsRapides) actionsRapides.style.display = '';
 
     afficherPage('pageConnexion');
 }
@@ -227,13 +273,28 @@ async function inscrireUtilisateur() {
         afficherErreur('Veuillez remplir tous les champs');
         return;
     }
-    if (motDePasse.length < 6) {
-        afficherErreur('Le mot de passe doit contenir au moins 6 caracteres');
+    if (motDePasse.length < 12) {
+        afficherErreur('Le mot de passe doit contenir au moins 12 caracteres');
+        return;
+    }
+    if (!/[A-Z]/.test(motDePasse)) {
+        afficherErreur('Le mot de passe doit contenir au moins une majuscule');
+        return;
+    }
+    if (!/[a-z]/.test(motDePasse)) {
+        afficherErreur('Le mot de passe doit contenir au moins une minuscule');
+        return;
+    }
+    if (!/[0-9]/.test(motDePasse)) {
+        afficherErreur('Le mot de passe doit contenir au moins un chiffre');
         return;
     }
 
+    const btn = document.getElementById('btnInscription');
+    if (btn) { btn.disabled = true; btn.textContent = 'Création en cours…'; }
+
     try {
-        const reponse = await fetch(`${URL_API}/auth/register`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nom, email, mot_de_passe: motDePasse })
@@ -242,7 +303,6 @@ async function inscrireUtilisateur() {
         const donnees = await reponse.json();
         if (!reponse.ok) throw new Error(donnees.detail || 'Erreur lors de l\'inscription');
 
-        localStorage.setItem('token', donnees.access_token);
         localStorage.setItem('user', JSON.stringify(donnees.user));
         utilisateurCourant = donnees.user;
         mettreAJourAffichageUtilisateur();
@@ -257,6 +317,7 @@ async function inscrireUtilisateur() {
 
     } catch (erreur) {
         afficherErreur(erreur.message);
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-user-plus"></i> Créer mon compte'; }
     }
 }
 
@@ -272,8 +333,11 @@ async function connecterUtilisateur() {
         return;
     }
 
+    const btn = document.getElementById('btnConnexion');
+    if (btn) { btn.disabled = true; btn.textContent = 'Connexion en cours…'; }
+
     try {
-        const reponse = await fetch(`${URL_API}/auth/login`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, mot_de_passe: motDePasse })
@@ -282,7 +346,6 @@ async function connecterUtilisateur() {
         const donnees = await reponse.json();
         if (!reponse.ok) throw new Error(donnees.detail || 'Email ou mot de passe incorrect');
 
-        localStorage.setItem('token', donnees.access_token);
         localStorage.setItem('user', JSON.stringify(donnees.user));
         utilisateurCourant = donnees.user;
         mettreAJourAffichageUtilisateur();
@@ -296,6 +359,7 @@ async function connecterUtilisateur() {
 
     } catch (erreur) {
         afficherErreur(erreur.message);
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Se connecter'; }
     }
 }
 
@@ -307,20 +371,20 @@ async function connecterUtilisateur() {
  * Lance le flux OAuth 2.0 Google en redirigeant vers le backend.
  */
 function connexionGoogle() {
-    window.location.href = 'http://localhost:8000/api/auth/google';
+    window.location.href = `${URL_API}/auth/google`;
 }
 
 /**
  * Detecte et traite un retour du flux OAuth Google.
- * Le backend redirige avec ?token=...&nom=...&user_id=...&email=...
- * ou avec ?google_error=... en cas d'echec.
+ * Succes : backend pose le cookie httpOnly et redirige avec ?google_ok=1
+ * Erreur : backend redirige avec ?google_error=... (query string)
  */
 async function traiterRetourGoogle() {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    const googleError = params.get('google_error');
+    const paramsQuery = new URLSearchParams(window.location.search);
+    const googleOk = paramsQuery.get('google_ok');
+    const googleError = paramsQuery.get('google_error');
 
-    if (!token && !googleError) return false;
+    if (!googleOk && !googleError) return false;
 
     // Nettoyage de l'URL pour eviter de retraiter au rechargement
     window.history.replaceState({}, '', window.location.pathname);
@@ -331,22 +395,33 @@ async function traiterRetourGoogle() {
             acces_refuse: 'Connexion Google annulee.',
             token_invalide: 'Erreur lors de l\'authentification Google.',
             profil_inaccessible: 'Impossible de recuperer votre profil Google.',
+            csrf_invalide: 'Requete de connexion invalide. Veuillez reessayer.',
         };
         afficherErreur(messages[googleError] || 'Connexion Google echouee.');
         afficherPage('pageConnexion');
         return true;
     }
 
-    const utilisateur = {
-        id: params.get('user_id') || '',
-        nom: params.get('nom') || 'Utilisateur',
-        email: params.get('email') || '',
-        favorites: [],
-    };
+    // Le cookie httpOnly a ete pose par le backend — recuperer le profil via l'API
+    try {
+        const reponseProfile = await fetchWithTimeout(`${URL_API}/auth/profile`);
+        if (!reponseProfile.ok) throw new Error('Profil inaccessible');
+        const profil = await reponseProfile.json();
+        const utilisateur = {
+            id: profil.id || '',
+            nom: profil.nom || 'Utilisateur',
+            email: profil.email || '',
+            favorites: [],
+        };
+        localStorage.setItem('user', JSON.stringify(utilisateur));
+        utilisateurCourant = utilisateur;
+    } catch (_) {
+        // Fallback minimal si le profil est temporairement indisponible
+        const utilisateur = { id: '', nom: 'Utilisateur', email: '', favorites: [] };
+        localStorage.setItem('user', JSON.stringify(utilisateur));
+        utilisateurCourant = utilisateur;
+    }
 
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(utilisateur));
-    utilisateurCourant = utilisateur;
     mettreAJourAffichageUtilisateur();
     await chargerFavoris();
     chargerCitationDuJour();
@@ -355,44 +430,49 @@ async function traiterRetourGoogle() {
 }
 
 /**
- * Verifie si une session existante (token dans localStorage) est encore valide.
- * Contacte le backend pour valider le token, avec fallback mode hors-ligne.
+ * Verifie la session en cours via le cookie httpOnly.
+ * Appelle GET /api/auth/profile — le cookie est envoye automatiquement.
+ * Fallback hors-ligne : restaure l'utilisateur depuis localStorage si le serveur est inaccessible.
  */
 async function verifierSessionExistante() {
-    const jeton = localStorage.getItem('token');
     const utilisateurSauvegarde = localStorage.getItem('user');
 
-    if (!jeton || !utilisateurSauvegarde) {
-        afficherPage('pageConnexion');
-        return;
-    }
-
     try {
-        const reponse = await fetch(`${URL_API}/auth/verify`, {
-            headers: { Authorization: `Bearer ${jeton}` }
-        });
+        const reponse = await fetchWithTimeout(`${URL_API}/auth/profile`);
 
         if (!reponse.ok) {
-            deconnecterUtilisateur();
+            localStorage.removeItem('user');
+            afficherPage('pageConnexion');
             return;
         }
 
-        utilisateurCourant = JSON.parse(utilisateurSauvegarde);
+        const profil = await reponse.json();
+        utilisateurCourant = {
+            id: profil.id || '',
+            nom: profil.nom || 'Utilisateur',
+            email: profil.email || '',
+            favorites: [],
+        };
+        localStorage.setItem('user', JSON.stringify(utilisateurCourant));
         mettreAJourAffichageUtilisateur();
         await chargerFavoris();
         chargerCitationDuJour();
         afficherPage('pagePrincipale');
 
     } catch {
-        // Serveur inaccessible : restauration locale
-        try {
-            utilisateurCourant = JSON.parse(utilisateurSauvegarde);
-            mettreAJourAffichageUtilisateur();
-            await chargerFavoris();
-            chargerCitationDuJour();
-            afficherPage('pagePrincipale');
-        } catch {
-            deconnecterUtilisateur();
+        // Serveur inaccessible : restauration depuis le cache local
+        if (utilisateurSauvegarde) {
+            try {
+                utilisateurCourant = JSON.parse(utilisateurSauvegarde);
+                mettreAJourAffichageUtilisateur();
+                await chargerFavoris();
+                chargerCitationDuJour();
+                afficherPage('pagePrincipale');
+            } catch {
+                afficherPage('pageConnexion');
+            }
+        } else {
+            afficherPage('pageConnexion');
         }
     }
 }
@@ -407,24 +487,27 @@ async function verifierSessionExistante() {
  * Echec silencieux : si l'API est indisponible, le bandeau reste vide.
  */
 async function chargerCitationDuJour() {
-    const jeton = localStorage.getItem('token');
-    if (!jeton) return;
+    if (!utilisateurCourant) return;
 
     const container = document.getElementById('citationDuJour');
     if (!container) return;
 
     try {
-        const reponse = await fetch(`${URL_API}/quotes/daily`, {
-            headers: { Authorization: `Bearer ${jeton}` }
-        });
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/daily`);
 
         if (!reponse.ok) return;
 
         const citation = await reponse.json();
-        container.innerHTML = `
-            <span class="daily-text">"${citation.text}"</span>
-            <span class="daily-author"> — ${citation.author}</span>
-        `;
+        // Construction via DOM pour eviter une injection XSS via les donnees de l'API.
+        container.innerHTML = '';
+        const spanTexte = document.createElement('span');
+        spanTexte.className = 'daily-text';
+        spanTexte.textContent = `"${citation.text}"`;
+        const spanAuteur = document.createElement('span');
+        spanAuteur.className = 'daily-author';
+        spanAuteur.textContent = ` \u2014 ${citation.author}`;
+        container.appendChild(spanTexte);
+        container.appendChild(spanAuteur);
     } catch {
         // Echec silencieux : le bandeau reste dans son etat de chargement
         container.innerHTML = '';
@@ -462,7 +545,6 @@ function definirCitationCourante(citation) {
     document.getElementById('boutonAjouterFavori').disabled = false;
     document.getElementById('boutonCopierCitation').disabled = false;
     document.getElementById('boutonTraduire').disabled = false;
-    document.getElementById('boutonExpliquer').disabled = false;
 
     document.getElementById('zoneTraduction').classList.add('hidden');
     document.getElementById('texteTraduction').textContent = '';
@@ -481,8 +563,7 @@ function construireTexteCopie(citation) {
  * Lit les filtres de categorie et d'auteur s'ils sont renseignes.
  */
 async function obtenirCitationAleatoire() {
-    const jeton = localStorage.getItem('token');
-    if (!jeton) {
+    if (!utilisateurCourant) {
         afficherErreur('Vous devez etre connecte');
         return;
     }
@@ -506,20 +587,14 @@ async function obtenirCitationAleatoire() {
             ? `${URL_API}/quotes/random?${params}`
             : `${URL_API}/quotes/random`;
 
-        const reponse = await fetch(url, {
-            headers: { Authorization: `Bearer ${jeton}` }
-        });
+        const reponse = await fetchWithTimeout(url);
 
         if (!reponse.ok) {
             if (reponse.status === 401) {
                 deconnecterUtilisateur();
                 throw new Error('Session expiree, veuillez vous reconnecter');
             }
-            if (reponse.status === 404 && author) {
-                throw new Error(`Aucune citation de l'auteur "${author}" n'a été trouvée.`);
-            }
-            const erreurData = await reponse.json().catch(() => ({}));
-            throw new Error(erreurData.detail || 'Erreur lors du chargement de la citation');
+            throw new Error('Erreur lors du chargement de la citation');
         }
 
         definirCitationCourante(await reponse.json());
@@ -563,7 +638,6 @@ async function traduireCitationCourante() {
         return;
     }
 
-    const jeton = localStorage.getItem('token');
     const bouton = document.getElementById('boutonTraduire');
     const texteOriginal = bouton.innerHTML;
 
@@ -571,14 +645,17 @@ async function traduireCitationCourante() {
     bouton.disabled = true;
 
     try {
+        // MyMemory limite les requetes a 500 caracteres
+        const texteATradure = citationCourante.text.slice(0, 500);
+        if (citationCourante.text.length > 500) {
+            afficherErreur('Citation trop longue pour la traduction (tronquee a 500 caracteres)');
+        }
         const params = new URLSearchParams({
-            texte: citationCourante.text,
+            texte: texteATradure,
             langue_source: 'en'
         });
 
-        const reponse = await fetch(`${URL_API}/quotes/translate?${params}`, {
-            headers: { Authorization: `Bearer ${jeton}` }
-        });
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/translate?${params}`);
 
         const donnees = await reponse.json();
         if (!reponse.ok) throw new Error(donnees.detail || 'Erreur lors de la traduction');
@@ -631,7 +708,6 @@ async function ajouterCitationAuxFavoris() {
         return;
     }
 
-    const jeton = localStorage.getItem('token');
     const bouton = document.getElementById('boutonAjouterFavori');
     const texteOriginal = bouton.innerHTML;
 
@@ -639,12 +715,9 @@ async function ajouterCitationAuxFavoris() {
     bouton.disabled = true;
 
     try {
-        const reponse = await fetch(`${URL_API}/quotes/favorites/${citationCourante.id}`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/favorites/${citationCourante.id}`, {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${jeton}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(citationCourante)
         });
 
@@ -669,12 +742,9 @@ async function ajouterCitationAuxFavoris() {
  * Retire une citation des favoris via DELETE /api/quotes/favorites/{id}.
  */
 async function retirerCitationDesFavoris(identifiantCitation) {
-    const jeton = localStorage.getItem('token');
-
     try {
-        const reponse = await fetch(`${URL_API}/quotes/favorites/${identifiantCitation}`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/favorites/${identifiantCitation}`, {
             method: 'DELETE',
-            headers: { Authorization: `Bearer ${jeton}` }
         });
 
         const donnees = await reponse.json();
@@ -700,15 +770,10 @@ async function modifierNoteFavori(quoteId, noteActuelle) {
     const nouvelleNote = prompt('Votre note personnelle (laissez vide pour effacer) :', noteActuelle || '');
     if (nouvelleNote === null) return; // Annule par l'utilisateur
 
-    const jeton = localStorage.getItem('token');
-
     try {
-        const reponse = await fetch(`${URL_API}/quotes/favorites/${quoteId}/note`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/favorites/${quoteId}/note`, {
             method: 'PATCH',
-            headers: {
-                Authorization: `Bearer ${jeton}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ note: nouvelleNote })
         });
 
@@ -724,17 +789,40 @@ async function modifierNoteFavori(quoteId, noteActuelle) {
 }
 
 /**
+ * Ouvre une invite pour modifier le tag personnalise sur un favori.
+ * Envoie un PATCH /api/quotes/favorites/{id}/tag avec le nouveau tag.
+ */
+async function modifierTagFavori(quoteId, tagActuel) {
+    const nouveauTag = prompt('Tag personnalise (laissez vide pour supprimer) :', tagActuel || '');
+    if (nouveauTag === null) return; // Annule par l'utilisateur
+
+    try {
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/favorites/${quoteId}/tag`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: nouveauTag })
+        });
+
+        const donnees = await reponse.json();
+        if (!reponse.ok) throw new Error(donnees.detail || 'Erreur lors de la modification du tag');
+
+        afficherSucces(nouveauTag ? 'Tag enregistre' : 'Tag supprime');
+        await chargerFavoris();
+
+    } catch (erreur) {
+        afficherErreur(erreur.message);
+    }
+}
+
+/**
  * Charge tous les favoris depuis GET /api/quotes/favorites.
  * Reconstruit la liste locale `favoris` puis declenche l'affichage.
  */
 async function chargerFavoris() {
-    const jeton = localStorage.getItem('token');
-    if (!jeton) return;
+    if (!utilisateurCourant) return;
 
     try {
-        const reponse = await fetch(`${URL_API}/quotes/favorites`, {
-            headers: { Authorization: `Bearer ${jeton}` }
-        });
+        const reponse = await fetchWithTimeout(`${URL_API}/quotes/favorites`);
 
         if (!reponse.ok) throw new Error('Erreur lors du chargement des favoris');
 
@@ -773,7 +861,7 @@ function filtrerFavoris() {
     if (!requete) return favoris;
 
     return favoris.filter(citation => {
-        const contenu = `${citation.text} ${citation.author} ${citation.category || ''}`.toLowerCase();
+        const contenu = `${citation.text} ${citation.author} ${citation.category || ''} ${citation.tag || ''}`.toLowerCase();
         return contenu.includes(requete);
     });
 }
@@ -882,18 +970,20 @@ function afficherFavoris() {
             elemNote.classList.remove('hidden');
         }
 
-        // Bouton demander a l'IA : retour page principale + ouverture chat avec citation en contexte
-        clone.querySelector('.ask-ai').onclick = () => {
-            afficherPage('pagePrincipale');
-            if (!chatOuvert) toggleChat();
-            const input = document.getElementById('chatInput');
-            input.value = 'Peux-tu m\'expliquer cette citation ?';
-            envoyerMessage(citation);
-        };
+        // Affichage du tag si il existe
+        const elemTag = clone.querySelector('.favorite-tag');
+        if (citation.tag) {
+            elemTag.textContent = `# ${citation.tag}`;
+            elemTag.classList.remove('hidden');
+        }
 
         // Bouton modifier la note
         clone.querySelector('.edit-note').onclick = () =>
             modifierNoteFavori(citation.id, citation.note || '');
+
+        // Bouton modifier le tag
+        clone.querySelector('.edit-tag').onclick = () =>
+            modifierTagFavori(citation.id, citation.tag || '');
 
         // Bouton copier
         clone.querySelector('.copy-favorite').onclick = () =>
@@ -916,12 +1006,8 @@ function afficherFavoris() {
  * Pre-remplit le champ de nom avec la valeur actuelle.
  */
 async function afficherPageProfil() {
-    const jeton = localStorage.getItem('token');
-
     try {
-        const reponse = await fetch(`${URL_API}/auth/profile`, {
-            headers: { Authorization: `Bearer ${jeton}` }
-        });
+        const reponse = await fetchWithTimeout(`${URL_API}/auth/profile`);
 
         if (!reponse.ok) throw new Error('Impossible de charger le profil');
 
@@ -958,15 +1044,10 @@ async function mettreAJourNomProfil() {
         return;
     }
 
-    const jeton = localStorage.getItem('token');
-
     try {
-        const reponse = await fetch(`${URL_API}/auth/profile`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/auth/profile`, {
             method: 'PUT',
-            headers: {
-                Authorization: `Bearer ${jeton}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nom })
         });
 
@@ -1001,8 +1082,12 @@ async function changerMotDePasse() {
         afficherErreur('Veuillez remplir tous les champs');
         return;
     }
-    if (nouveauMotDePasse.length < 6) {
-        afficherErreur('Le nouveau mot de passe doit contenir au moins 6 caracteres');
+    if (nouveauMotDePasse.length < 12) {
+        afficherErreur('Le nouveau mot de passe doit contenir au moins 12 caracteres');
+        return;
+    }
+    if (!/[A-Z]/.test(nouveauMotDePasse) || !/[a-z]/.test(nouveauMotDePasse) || !/[0-9]/.test(nouveauMotDePasse)) {
+        afficherErreur('Le mot de passe doit contenir au moins une majuscule, une minuscule et un chiffre');
         return;
     }
     if (nouveauMotDePasse !== confirmationMotDePasse) {
@@ -1010,15 +1095,10 @@ async function changerMotDePasse() {
         return;
     }
 
-    const jeton = localStorage.getItem('token');
-
     try {
-        const reponse = await fetch(`${URL_API}/auth/profile/password`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/auth/profile/password`, {
             method: 'PUT',
-            headers: {
-                Authorization: `Bearer ${jeton}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 mot_de_passe_actuel: motDePasseActuel,
                 nouveau_mot_de_passe: nouveauMotDePasse
@@ -1076,8 +1156,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Priorite 3 : restaurer une session existante
     await verifierSessionExistante();
 
-    // Clic sur le compte demo : remplissage automatique des champs
-    document.querySelector('.demo-account code')?.addEventListener('click', () => {
+    // Clic sur le compte demo : remplissage automatique des champs.
+    // IMPORTANT : ce bloc est reserve au developpement local.
+    // Supprimer l'element #infoDemoCompte du HTML avant tout deploiement en production.
+    document.getElementById('infoDemoCompte')?.addEventListener('click', () => {
         document.getElementById('courrielConnexion').value = 'demo@test.com';
         document.getElementById('motDePasseConnexion').value = 'demo123';
     });
@@ -1088,100 +1170,457 @@ document.addEventListener('DOMContentLoaded', async () => {
         paginationFavoris.page = 1; // Retour a la premiere page a chaque nouvelle recherche
         afficherFavoris();
     });
+
+    // Auto-resize du textarea du chat
+    document.getElementById('chatSaisie')?.addEventListener('input', function () {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
 });
 
 // ─────────────────────────────────────────────
-// CHATBOT GEMINI
+// CHAT IA
 // ─────────────────────────────────────────────
 
-let chatOuvert = false;
+/** Message de bienvenue affiché au chargement */
+const MESSAGE_BIENVENUE_CHAT = "Bonjour ! Je suis votre assistant littéraire. Posez-moi des questions sur vos citations favorites, demandez-moi d'expliquer une citation, ou explorons ensemble un thème philosophique.";
 
-/** Ouvre ou ferme le panel de chat. */
-function toggleChat() {
-    chatOuvert = !chatOuvert;
-    const panel = document.getElementById('panelChat');
-    const bouton = document.getElementById('boutonChat');
-    panel.classList.toggle('hidden', !chatOuvert);
-    bouton.classList.toggle('active', chatOuvert);
-    if (chatOuvert) document.getElementById('chatInput').focus();
+/**
+ * Affiche la page chat et initialise la conversation si vide.
+ */
+function afficherPageChat() {
+    afficherPage('pageChat');
+    const zone = document.getElementById('chatMessages');
+    if (zone && zone.children.length === 0) {
+        ajouterBulleChat('assistant', MESSAGE_BIENVENUE_CHAT, false);
+    }
+    // Synchronise l'icone theme
+    const theme = localStorage.getItem('theme') || 'light';
+    const icone = document.querySelector('#boutonThemeChat i');
+    if (icone) icone.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
 }
 
 /**
- * Ouvre le chat et pre-remplit avec un message d'explication
- * de la citation courante.
+ * Remet la conversation a zero.
  */
-function expliquerCitation() {
-    if (!citationCourante) return;
-    if (!chatOuvert) toggleChat();
-    const input = document.getElementById('chatInput');
-    input.value = `Peux-tu m'expliquer cette citation ?`;
-    input.focus();
-    envoyerMessage(citationCourante);
+function reinitialiserChat() {
+    historiqueChat = [];
+    chargementChat = false;
+    const zone = document.getElementById('chatMessages');
+    if (zone) zone.innerHTML = '';
+    ajouterBulleChat('assistant', MESSAGE_BIENVENUE_CHAT, false);
+    document.getElementById('chatActionsRapides').style.display = '';
+    document.getElementById('chatSaisie').value = '';
 }
 
 /**
- * Envoie le message saisi au backend /api/chat et affiche la reponse.
- * @param {object|null} citationContexte - Citation a joindre en contexte (optionnel)
+ * Ajoute une bulle de message dans la zone de chat.
+ * @param {'user'|'assistant'} role
+ * @param {string} contenu
+ * @param {boolean} erreur
  */
-async function envoyerMessage(citationContexte = null) {
-    const input = document.getElementById('chatInput');
-    const message = input.value.trim();
-    if (!message) return;
+function ajouterBulleChat(role, contenu, erreur) {
+    const zone = document.getElementById('chatMessages');
+    if (!zone) return;
 
-    const jeton = localStorage.getItem('token');
-    input.value = '';
+    const wrap = document.createElement('div');
+    wrap.className = `chat-bulle-wrap chat-bulle-${role}`;
 
-    ajouterMessageChat('user', message);
-    const indicateur = ajouterMessageChat('bot', '...');
+    if (role === 'assistant') {
+        const avatar = document.createElement('div');
+        avatar.className = 'chat-avatar';
+        avatar.innerHTML = '<i class="fas fa-robot"></i>';
+        wrap.appendChild(avatar);
+    }
+
+    const bulle = document.createElement('div');
+    bulle.className = `chat-bulle chat-bulle-contenu-${role}${erreur ? ' chat-bulle-erreur' : ''}`;
+    // Utilise textContent pour eviter XSS
+    bulle.textContent = contenu;
+    wrap.appendChild(bulle);
+
+    zone.appendChild(wrap);
+    zone.scrollTop = zone.scrollHeight;
+}
+
+/**
+ * Gestion de l'indicateur "en train d'ecrire".
+ */
+function afficherIndicateurFrappe(afficher) {
+    const existant = document.getElementById('chatFrappe');
+    if (afficher) {
+        if (existant) return;
+        const zone = document.getElementById('chatMessages');
+        const frappe = document.createElement('div');
+        frappe.id = 'chatFrappe';
+        frappe.className = 'chat-bulle-wrap chat-bulle-assistant';
+        frappe.innerHTML = `
+            <div class="chat-avatar"><i class="fas fa-robot"></i></div>
+            <div class="chat-frappe">
+                <span></span><span></span><span></span>
+            </div>
+        `;
+        zone.appendChild(frappe);
+        zone.scrollTop = zone.scrollHeight;
+    } else {
+        existant?.remove();
+    }
+}
+
+/**
+ * Envoie le message saisi par l'utilisateur au chatbot IA.
+ */
+async function envoyerMessageChat() {
+    const saisie = document.getElementById('chatSaisie');
+    const contenu = saisie.value.trim();
+    if (!contenu || chargementChat) return;
+
+    if (!utilisateurCourant) { afficherErreur('Vous devez être connecté.'); return; }
+
+    // Masquer actions rapides des le premier echange
+    document.getElementById('chatActionsRapides').style.display = 'none';
+
+    ajouterBulleChat('user', contenu, false);
+    historiqueChat.push({ role: 'user', content: contenu });
+    if (historiqueChat.length > 40) historiqueChat = historiqueChat.slice(-40);
+    saisie.value = '';
+    saisie.style.height = 'auto';
+
+    chargementChat = true;
+    afficherIndicateurFrappe(true);
 
     try {
-        const reponse = await fetch(`${URL_API}/chat`, {
+        const reponse = await fetchWithTimeout(`${URL_API}/ai/chat`, {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${jeton}`,
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                message,
-                citation: citationContexte || citationCourante || null,
+                message: contenu,
+                historique: historiqueChat.slice(-19, -1),
             }),
         });
 
-        if (reponse.status === 401) {
-            deconnecterUtilisateur();
-            return;
-        }
-
         const donnees = await reponse.json();
-        if (!reponse.ok) {
-            indicateur.textContent = donnees.detail || 'Erreur de réponse.';
-        } else {
-            indicateur.textContent = donnees.reply || 'Erreur de réponse.';
-        }
-    } catch {
-        indicateur.textContent = 'Impossible de joindre le service de chat.';
-    }
+        if (!reponse.ok) throw new Error(donnees.detail || 'Erreur IA');
 
-    // Scroll automatique vers le bas
-    const zone = document.getElementById('chatMessages');
-    zone.scrollTop = zone.scrollHeight;
+        afficherIndicateurFrappe(false);
+        ajouterBulleChat('assistant', donnees.reponse, false);
+        historiqueChat.push({ role: 'assistant', content: donnees.reponse });
+
+    } catch (err) {
+        afficherIndicateurFrappe(false);
+        ajouterBulleChat('assistant', `Désolé, une erreur est survenue : ${err.message}`, true);
+    } finally {
+        chargementChat = false;
+    }
 }
 
 /**
- * Ajoute un message dans la zone de chat et retourne la bulle.
- * @param {'user'|'bot'} role
- * @param {string} texte
- * @returns {HTMLElement} La bulle de texte (pour mise a jour ulterieure)
+ * Envoie via Entree (sans Shift).
  */
-function ajouterMessageChat(role, texte) {
-    const zone = document.getElementById('chatMessages');
-    const div = document.createElement('div');
-    div.className = `chat-message ${role}`;
-    const bulle = document.createElement('div');
-    bulle.className = 'chat-bubble';
-    bulle.textContent = texte;
-    div.appendChild(bulle);
-    zone.appendChild(div);
-    zone.scrollTop = zone.scrollHeight;
-    return bulle;
+function chatKeyDown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        envoyerMessageChat();
+    }
+}
+
+/**
+ * Declenche une action rapide (recommendation ou analyse).
+ * @param {'analyze'|'recommend'} type
+ * @param {string} label  Texte affiche comme message utilisateur
+ * @param {string|null} humeur  Param pour /recommend
+ */
+async function actionRapideChat(type, label, humeur) {
+    if (chargementChat) return;
+
+    if (!utilisateurCourant) { afficherErreur('Vous devez être connecté.'); return; }
+
+    document.getElementById('chatActionsRapides').style.display = 'none';
+    ajouterBulleChat('user', label, false);
+    chargementChat = true;
+    afficherIndicateurFrappe(true);
+
+    try {
+        const url = type === 'analyze' ? `${URL_API}/ai/analyze` : `${URL_API}/ai/recommend`;
+        const body = type === 'analyze' ? '{}' : JSON.stringify({ humeur });
+
+        const reponse = await fetchWithTimeout(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+        });
+
+        const donnees = await reponse.json();
+        if (!reponse.ok) throw new Error(donnees.detail || 'Erreur IA');
+
+        afficherIndicateurFrappe(false);
+        ajouterBulleChat('assistant', donnees.reponse, false);
+
+    } catch (err) {
+        afficherIndicateurFrappe(false);
+        ajouterBulleChat('assistant', `Désolé, une erreur est survenue : ${err.message}`, true);
+    } finally {
+        chargementChat = false;
+    }
+}
+
+/* ============================================================
+   MOT DE PASSE OUBLIE
+   ============================================================ */
+
+let _resetTimerInterval = null;
+let _resetEmailCourant  = '';
+
+function afficherPageMotDePasseOublie() {
+    _resetEmailCourant = '';
+    clearInterval(_resetTimerInterval);
+    _resetTimerInterval = null;
+
+    const emailInput = document.getElementById('resetEmail');
+    if (emailInput) emailInput.value = '';
+
+    passerEtapeReset(1);
+    afficherPage('pageMotDePasseOublie');
+}
+
+function passerEtapeReset(n) {
+    for (let i = 1; i <= 3; i++) {
+        const el = document.getElementById('resetEtape' + i);
+        if (el) el.classList.toggle('hidden', i !== n);
+    }
+    _majIndicateursEtapes(n);
+}
+
+function _majIndicateursEtapes(etapeActive) {
+    for (let i = 1; i <= 3; i++) {
+        const ind = document.getElementById('resetStep' + i + 'Indicator');
+        if (!ind) continue;
+        ind.classList.remove('reset-step-active', 'reset-step-done');
+        if (i < etapeActive)        ind.classList.add('reset-step-done');
+        else if (i === etapeActive)  ind.classList.add('reset-step-active');
+    }
+    const line1 = document.getElementById('resetStepLine');
+    const line2 = document.getElementById('resetStepLine2');
+    if (line1) {
+        line1.classList.toggle('done',   etapeActive > 2);
+        line1.classList.toggle('active', etapeActive === 2);
+    }
+    if (line2) {
+        line2.classList.toggle('done',   etapeActive > 3);
+        line2.classList.toggle('active', etapeActive === 3);
+    }
+}
+
+function _afficherErreurReset(el, msg) {
+    if (!el) return;
+    if (msg) {
+        el.textContent = msg;
+        el.classList.remove('hidden');
+    } else {
+        el.textContent = '';
+        el.classList.add('hidden');
+    }
+}
+
+async function demanderCodeReset() {
+    // Étape 1 : email vient du champ ; étape 2 (renvoi) : email déjà mémorisé
+    const emailInput = document.getElementById('resetEmail');
+    const errEl      = document.getElementById('resetEmailErreur');
+    const email      = _resetEmailCourant || (emailInput ? emailInput.value.trim().toLowerCase() : '');
+
+    _afficherErreurReset(errEl, '');
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        _afficherErreurReset(errEl, 'Veuillez entrer une adresse email valide.');
+        return;
+    }
+
+    // Bouton actif selon l'étape courante
+    const btnEnvoyer  = document.getElementById('btnDemanderCode');
+    const btnRenvoyer = document.getElementById('btnRenvoyer');
+    const estRenvoi   = !!_resetEmailCourant;
+    const btnActif    = estRenvoi ? btnRenvoyer : btnEnvoyer;
+    if (btnActif) { btnActif.disabled = true; btnActif.textContent = 'Envoi...'; }
+
+    try {
+        const rep = await fetchWithTimeout(URL_API + '/auth/password-reset/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+
+        if (!rep.ok) {
+            const data = await rep.json().catch(() => ({}));
+            const msg = data.detail || 'Impossible d\'envoyer le code.';
+            const errCible = estRenvoi ? document.getElementById('resetMdpErreur') : errEl;
+            _afficherErreurReset(errCible, msg);
+            return;
+        }
+
+        _resetEmailCourant = email;
+
+        // Mettre à jour l'affichage email confirmé sans écraser le lien "Modifier"
+        const emailAffiche = document.getElementById('resetEmailAffiche');
+        if (emailAffiche) emailAffiche.textContent = email;
+
+        if (!estRenvoi) {
+            passerEtapeReset(2);
+        }
+        _demarrerTimerRenvoi();
+
+    } catch (err) {
+        const errCible = estRenvoi ? document.getElementById('resetMdpErreur') : errEl;
+        _afficherErreurReset(errCible, 'Erreur réseau. Réessayez.');
+    } finally {
+        if (btnEnvoyer) {
+            btnEnvoyer.disabled = false;
+            btnEnvoyer.innerHTML = '<i class="fas fa-paper-plane"></i> Envoyer le code';
+        }
+    }
+}
+
+function _demarrerTimerRenvoi() {
+    const btn = document.getElementById('btnRenvoyer');
+    if (!btn) return;
+    btn.disabled = true;
+    let secondes = 60;
+    btn.textContent = 'Renvoyer (' + secondes + 's)';
+    clearInterval(_resetTimerInterval);
+    _resetTimerInterval = setInterval(function() {
+        secondes--;
+        if (secondes <= 0) {
+            clearInterval(_resetTimerInterval);
+            _resetTimerInterval = null;
+            btn.disabled = false;
+            btn.textContent = 'Renvoyer';
+        } else {
+            btn.textContent = 'Renvoyer (' + secondes + 's)';
+        }
+    }, 1000);
+}
+
+function verifierCodeComplet() {
+    const input = document.getElementById('resetCode');
+    const hint  = document.getElementById('codeValideHint');
+    if (!input || !hint) return;
+    const val = input.value.replace(/\D/g, '').slice(0, 6);
+    input.value = val;
+    hint.classList.toggle('hidden', val.length !== 6);
+}
+
+function majForceMdp() {
+    const mdp = (document.getElementById('resetNouveauMdp') || {}).value || '';
+    const container = document.getElementById('forceMdpContainer');
+    if (!container) return;
+    container.classList.toggle('hidden', mdp.length === 0);
+    if (mdp.length === 0) return;
+
+    const regles = {
+        longueur:  mdp.length >= 12,
+        majuscule: /[A-Z]/.test(mdp),
+        minuscule: /[a-z]/.test(mdp),
+        chiffre:   /\d/.test(mdp),
+    };
+    const score = Object.values(regles).filter(Boolean).length;
+
+    const couleurs = ['#ef4444', '#f97316', '#eab308', '#10b981'];
+    const labels   = ['Faible', 'Moyen', 'Bien', 'Fort'];
+    const couleur  = couleurs[score - 1] || '#ef4444';
+
+    for (let i = 1; i <= 4; i++) {
+        const barre = document.getElementById('forceBarre' + i);
+        if (barre) barre.style.background = i <= score ? couleur : '';
+    }
+    const label = document.getElementById('forceLabel');
+    if (label) { label.textContent = labels[score - 1] || ''; label.style.color = couleur; }
+
+    const ids = { longueur: 'regleLongueur', majuscule: 'regleMajuscule', minuscule: 'regleMinuscule', chiffre: 'regleChiffre' };
+    for (const k in ids) {
+        const li = document.getElementById(ids[k]);
+        if (!li) continue;
+        li.classList.toggle('force-regle-ok', regles[k]);
+        const ic = li.querySelector('i');
+        if (ic) ic.className = regles[k] ? 'fas fa-check-circle' : 'fas fa-circle';
+    }
+
+    verifierCorrespondance();
+}
+
+function verifierCorrespondance() {
+    const mdp     = (document.getElementById('resetNouveauMdp') || {}).value    || '';
+    const confirm = (document.getElementById('resetConfirmMdp') || {}).value || '';
+    const errEl   = document.getElementById('erreurMatch');
+    if (!errEl) return;
+    if (confirm.length === 0) { errEl.classList.add('hidden'); return; }
+    errEl.classList.toggle('hidden', mdp === confirm);
+}
+
+async function reinitialiserMotDePasse() {
+    const code    = ((document.getElementById('resetCode') || {}).value || '').trim();
+    const mdp     = (document.getElementById('resetNouveauMdp') || {}).value    || '';
+    const confirm = (document.getElementById('resetConfirmMdp') || {}).value || '';
+    const errEl   = document.getElementById('resetMdpErreur');
+
+    _afficherErreurReset(errEl, '');
+
+    if (code.length !== 6) {
+        _afficherErreurReset(errEl, 'Le code doit contenir 6 chiffres.');
+        return;
+    }
+    if (mdp.length < 12 || !/[A-Z]/.test(mdp) || !/[a-z]/.test(mdp) || !/\d/.test(mdp)) {
+        _afficherErreurReset(errEl, 'Le mot de passe ne respecte pas les critères requis.');
+        return;
+    }
+    if (mdp !== confirm) {
+        _afficherErreurReset(errEl, 'Les mots de passe ne correspondent pas.');
+        return;
+    }
+
+    const btn = document.getElementById('btnReinitialiser');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Vérification...'; }
+
+    try {
+        const rep = await fetchWithTimeout(URL_API + '/auth/password-reset/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: _resetEmailCourant, code: code, nouveau_mot_de_passe: mdp })
+        });
+        const data = await rep.json();
+        if (!rep.ok) throw new Error(data.detail || 'Code invalide ou expiré.');
+
+        clearInterval(_resetTimerInterval);
+        _resetTimerInterval = null;
+        passerEtapeReset(3);
+
+    } catch (err) {
+        _afficherErreurReset(errEl, err.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Réinitialiser le mot de passe'; }
+    }
+}
+
+function resetRetourEtape1() {
+    clearInterval(_resetTimerInterval);
+    _resetTimerInterval = null;
+
+    // Pré-remplir l'email pour que l'utilisateur n'ait pas à le retaper
+    const emailInput = document.getElementById('resetEmail');
+    if (emailInput) emailInput.value = _resetEmailCourant;
+    _resetEmailCourant = '';
+
+    ['resetCode','resetNouveauMdp','resetConfirmMdp'].forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    ['resetEmailErreur','resetMdpErreur'].forEach(function(id) {
+        _afficherErreurReset(document.getElementById(id), '');
+    });
+    const codeHint = document.getElementById('codeValideHint');
+    if (codeHint) codeHint.classList.add('hidden');
+    const errMatch = document.getElementById('erreurMatch');
+    if (errMatch) errMatch.classList.add('hidden');
+    const forceC = document.getElementById('forceMdpContainer');
+    if (forceC) forceC.classList.add('hidden');
+
+    passerEtapeReset(1);
 }

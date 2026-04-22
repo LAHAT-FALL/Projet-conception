@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QuoteKeeper - Gardez vos citations preferees</title>
+    <title>QuoteKeeper - Portail</title>
     <!-- Application du theme sombre avant le chargement du CSS pour eviter le flash blanc -->
     <script>
         (function () {
@@ -13,425 +13,773 @@
     </script>
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,600;1,400;1,600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
 
-        <!-- ═══════════════════════════════════════════════════════════════
-             PAGE CONNEXION
-        ════════════════════════════════════════════════════════════════ -->
-        <div id="pageConnexion" class="page active">
-            <div class="logo">
-                <i class="fas fa-quote-right"></i>
-                <h1>QuoteKeeper</h1>
-                <p>Gardez vos citations preferees</p>
-            </div>
+    <!-- ═══════════════════════════════════════════════════════════════
+         AUTH WRAPPER — visible avant connexion
+    ════════════════════════════════════════════════════════════════ -->
+    <div id="authWrapper" class="auth-wrapper">
+        <div class="auth-container">
 
-            <div class="form-container">
-                <h2>Connexion</h2>
-
-                <div class="form-group">
-                    <label for="courrielConnexion">
-                        <i class="fas fa-envelope"></i>
-                        Email
-                    </label>
-                    <input type="email" id="courrielConnexion" placeholder="votre@email.com" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="motDePasseConnexion">
-                        <i class="fas fa-lock"></i>
-                        Mot de passe
-                    </label>
-                    <input type="password" id="motDePasseConnexion" placeholder="********" required>
-                </div>
-
-                <button type="button" onclick="connecterUtilisateur()" class="btn-primary">
-                    <i class="fas fa-sign-in-alt"></i>
-                    Se connecter
-                </button>
-
-                <div class="google-divider"><span>ou</span></div>
-
-                <button type="button" onclick="connexionGoogle()" class="btn-google">
-                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-                    </svg>
-                    Continuer avec Google
-                </button>
-
-                <div class="demo-account">
-                    <p>Compte de demonstration :</p>
-                    <code>demo@test.com / demo123</code>
-                </div>
-
-                <p class="switch-text">
-                    Pas encore de compte ?
-                    <a href="#" onclick="afficherPageInscription()">S'inscrire</a>
-                </p>
-            </div>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════════
-             PAGE INSCRIPTION
-        ════════════════════════════════════════════════════════════════ -->
-        <div id="pageInscription" class="page">
-            <div class="logo">
-                <i class="fas fa-quote-right"></i>
-                <h1>QuoteKeeper</h1>
-                <p>Rejoignez-nous</p>
-            </div>
-
-            <div class="form-container">
-                <h2>Inscription</h2>
-
-                <div class="form-group">
-                    <label for="nomInscription">
-                        <i class="fas fa-user"></i>
-                        Nom
-                    </label>
-                    <input type="text" id="nomInscription" placeholder="Votre nom" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="courrielInscription">
-                        <i class="fas fa-envelope"></i>
-                        Email
-                    </label>
-                    <input type="email" id="courrielInscription" placeholder="votre@email.com" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="motDePasseInscription">
-                        <i class="fas fa-lock"></i>
-                        Mot de passe
-                    </label>
-                    <input type="password" id="motDePasseInscription" placeholder="********" required>
-                    <small>Minimum 6 caracteres</small>
-                </div>
-
-                <button type="button" onclick="inscrireUtilisateur()" class="btn-primary">
-                    <i class="fas fa-user-plus"></i>
-                    S'inscrire
-                </button>
-
-                <div class="google-divider"><span>ou</span></div>
-
-                <button type="button" onclick="connexionGoogle()" class="btn-google">
-                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-                    </svg>
-                    Continuer avec Google
-                </button>
-
-                <p class="switch-text">
-                    Deja inscrit ?
-                    <a href="#" onclick="afficherPageConnexion()">Se connecter</a>
-                </p>
-            </div>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════════
-             PAGE PRINCIPALE
-        ════════════════════════════════════════════════════════════════ -->
-        <div id="pagePrincipale" class="page">
-            <div class="header">
-                <div class="logo-small">
-                    <i class="fas fa-quote-right"></i>
-                    <h2>QuoteKeeper</h2>
-                </div>
-
-                <div class="user-info">
-                    <span id="affichageNomUtilisateur">
-                        <i class="fas fa-user-circle"></i>
-                        <span id="nomUtilisateur">Utilisateur</span>
-                    </span>
-                    <!-- Bouton profil -->
-                    <button type="button" onclick="afficherPageProfil()" class="btn-icon" title="Mon profil">
-                        <i class="fas fa-user-cog"></i>
-                    </button>
-                    <!-- Bouton dark mode -->
-                    <button type="button" onclick="basculerTheme()" class="btn-icon" id="boutonTheme" title="Changer le theme">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                    <!-- Bouton deconnexion -->
-                    <button type="button" onclick="deconnecterUtilisateur()" class="btn-icon" title="Deconnexion">
-                        <i class="fas fa-sign-out-alt"></i>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Citation du jour (bandeau) -->
-            <div class="daily-quote-section" id="sectionCitationDuJour">
-                <div class="daily-quote-header">
-                    <i class="fas fa-sun"></i>
-                    <span>Citation du jour</span>
-                </div>
-                <div class="daily-quote-content" id="citationDuJour">
-                    <span class="daily-loading">
-                        <i class="fas fa-spinner fa-spin"></i>
-                    </span>
-                </div>
-            </div>
-
-            <div class="quote-section">
-                <div class="quote-card" id="carteCitation">
-                    <div class="quote-icon">
-                        <i class="fas fa-quote-left"></i>
-                    </div>
-                    <p class="quote-text" id="texteCitation">
-                        Cliquez sur "Nouvelle citation" pour commencer
-                    </p>
-                    <p class="quote-author" id="auteurCitation"></p>
-                    <div id="zoneTraduction" class="translation-zone hidden">
-                        <div class="translation-label">
-                            <i class="fas fa-language"></i>
-                            Traduction en francais :
+            <!-- PAGE CONNEXION -->
+            <div id="pageConnexion" class="page active">
+                <div class="auth-split">
+                    <div class="auth-brand">
+                        <div class="auth-brand-inner">
+                            <div class="auth-brand-logo">
+                                <i class="fas fa-quote-right"></i>
+                            </div>
+                            <h1>QuoteKeeper</h1>
+                            <p>Collectionnez les citations qui vous inspirent au quotidien</p>
+                            <div class="auth-features">
+                                <div class="auth-feature">
+                                    <i class="fas fa-bolt"></i>
+                                    Citations aléatoires
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-heart"></i>
+                                    Favoris personnels
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-robot"></i>
+                                    Assistant IA
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-language"></i>
+                                    Traduction instantanée
+                                </div>
+                            </div>
                         </div>
-                        <p class="translation-text" id="texteTraduction"></p>
                     </div>
-                </div>
+                    <div class="auth-form-side">
+                        <div class="form-container">
+                            <h2>Connexion</h2>
+                            <p class="auth-subtitle">Bienvenue, content de vous revoir.</p>
 
-                <!-- Panneau de filtres pour les citations aleatoires -->
-                <div class="filter-panel">
-                    <div class="filter-group">
-                        <label for="filtreCategorie" title="Filtrer par categorie">
-                            <i class="fas fa-tag"></i>
-                        </label>
-                        <select id="filtreCategorie">
-                            <option value="">Toutes categories</option>
-                            <option value="inspirational">Inspirational</option>
-                            <option value="life">Life</option>
-                            <option value="success">Success</option>
-                            <option value="happiness">Happiness</option>
-                            <option value="love">Love</option>
-                            <option value="wisdom">Wisdom</option>
-                            <option value="friendship">Friendship</option>
-                            <option value="courage">Courage</option>
-                            <option value="knowledge">Knowledge</option>
-                            <option value="faith">Faith</option>
-                            <option value="funny">Funny</option>
-                            <option value="art">Art</option>
-                            <option value="education">Education</option>
-                            <option value="leadership">Leadership</option>
-                            <option value="nature">Nature</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label for="filtreAuteur" title="Filtrer par auteur">
-                            <i class="fas fa-user-pen"></i>
-                        </label>
-                        <input type="text" id="filtreAuteur" placeholder="Auteur...">
-                    </div>
-                    <button type="button" onclick="reinitialiserFiltres()" class="btn-filter-clear" id="boutonEffacerFiltres" title="Effacer les filtres">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-
-                <div class="quote-actions">
-                    <button type="button" onclick="obtenirCitationAleatoire()" class="btn-primary" id="boutonNouvelleCitation">
-                        <i class="fas fa-sync-alt"></i>
-                        Nouvelle citation
-                    </button>
-                    <button type="button" onclick="ajouterCitationAuxFavoris()" class="btn-secondary" id="boutonAjouterFavori" disabled>
-                        <i class="far fa-heart"></i>
-                        Ajouter aux favoris
-                    </button>
-                    <button type="button" onclick="traduireCitationCourante()" class="btn-outline" id="boutonTraduire" disabled>
-                        <i class="fas fa-language"></i>
-                        Traduire
-                    </button>
-                    <button type="button" onclick="expliquerCitation()" class="btn-outline" id="boutonExpliquer" disabled>
-                        <i class="fas fa-robot"></i>
-                        Expliquer
-                    </button>
-                    <button type="button" onclick="copierCitationCourante()" class="btn-outline" id="boutonCopierCitation" disabled>
-                        <i class="fas fa-copy"></i>
-                        Copier
-                    </button>
-                </div>
-
-                <div class="custom-quote-panel">
-                    <div class="section-header">
-                        <h3>
-                            <i class="fas fa-pen"></i>
-                            Ajouter ma propre citation
-                        </h3>
-                    </div>
-
-                    <div class="custom-quote-grid">
-                        <div class="form-group">
-                            <label for="texteCitationPersonnalisee">Texte</label>
-                            <textarea id="texteCitationPersonnalisee" rows="3" placeholder="Ecrivez votre citation..."></textarea>
-                        </div>
-
-                        <div class="custom-quote-meta">
                             <div class="form-group">
-                                <label for="auteurCitationPersonnalisee">Auteur</label>
-                                <input type="text" id="auteurCitationPersonnalisee" placeholder="Auteur">
+                                <label for="courrielConnexion">
+                                    <i class="fas fa-envelope"></i>
+                                    Email
+                                </label>
+                                <input type="email" id="courrielConnexion" placeholder="votre@email.com" required>
                             </div>
 
                             <div class="form-group">
-                                <label for="categorieCitationPersonnalisee">Categorie</label>
-                                <select id="categorieCitationPersonnalisee">
-                                    <option value="inspirational">Inspirational</option>
-                                    <option value="life">Life</option>
-                                    <option value="success">Success</option>
-                                    <option value="happiness">Happiness</option>
-                                    <option value="love">Love</option>
-                                    <option value="wisdom">Wisdom</option>
-                                    <option value="friendship">Friendship</option>
-                                    <option value="courage">Courage</option>
-                                    <option value="knowledge">Knowledge</option>
-                                    <option value="faith">Faith</option>
-                                    <option value="funny">Funny</option>
-                                    <option value="art">Art</option>
-                                    <option value="education">Education</option>
-                                    <option value="leadership">Leadership</option>
-                                    <option value="nature">Nature</option>
-                                </select>
+                                <label for="motDePasseConnexion">
+                                    <i class="fas fa-lock"></i>
+                                    Mot de passe
+                                    <a href="#" class="forgot-link" onclick="afficherPageMotDePasseOublie(); return false;">
+                                        Mot de passe oublié ?
+                                    </a>
+                                </label>
+                                <input type="password" id="motDePasseConnexion" placeholder="••••••••" required>
                             </div>
 
-                            <button type="button" onclick="utiliserCitationPersonnalisee()" class="btn-primary">
-                                <i class="fas fa-wand-magic-sparkles"></i>
-                                Utiliser ma citation
+                            <button type="button" id="btnConnexion" onclick="connecterUtilisateur()" class="btn-primary">
+                                <i class="fas fa-sign-in-alt"></i>
+                                Se connecter
                             </button>
+
+                            <div class="google-divider"><span>ou</span></div>
+
+                            <button type="button" onclick="connexionGoogle()" class="btn-google">
+                                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                                </svg>
+                                Continuer avec Google
+                            </button>
+
+                            <div class="demo-account">
+                                <p>Compte de demonstration :</p>
+                                <code id="infoDemoCompte">demo@test.com / demo123</code>
+                            </div>
+
+                            <p class="switch-text">
+                                Pas encore de compte ?
+                                <a href="#" onclick="afficherPageInscription()">S'inscrire</a>
+                            </p>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="favorites-section">
-                <div class="section-header">
-                    <h3>
-                        <i class="fas fa-heart"></i>
-                        Mes citations favorites
-                    </h3>
-                    <span class="favorites-count" id="compteurFavoris">0</span>
-                </div>
-
-                <div class="favorites-toolbar">
-                    <div class="search-box">
-                        <i class="fas fa-search"></i>
-                        <input type="search" id="champRechercheFavoris" placeholder="Rechercher par texte ou auteur">
+            <!-- PAGE MOT DE PASSE OUBLIÉ -->
+            <div id="pageMotDePasseOublie" class="page">
+                <div class="auth-split">
+                    <div class="auth-brand auth-brand-warning">
+                        <div class="auth-brand-inner">
+                            <div class="auth-brand-logo auth-brand-logo-warning">
+                                <i class="fas fa-lock-open"></i>
+                            </div>
+                            <h1>Réinitialisation</h1>
+                            <p>Récupérez l'accès à votre compte en quelques secondes</p>
+                            <div class="auth-features">
+                                <div class="auth-feature">
+                                    <i class="fas fa-envelope"></i>
+                                    Code envoyé par email
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-shield-halved"></i>
+                                    Code valide 10 minutes
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-key"></i>
+                                    Nouveau mot de passe sécurisé
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
+                    <div class="auth-form-side">
+                        <div class="form-container">
 
-                <div id="listeFavoris" class="favorites-list">
-                    <div class="loading-spinner">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        Chargement...
+                            <!-- Indicateur d'étapes -->
+                            <div class="reset-steps">
+                                <div class="reset-step reset-step-active" id="resetStep1Indicator">
+                                    <div class="reset-step-circle">1</div>
+                                    <span>Email</span>
+                                </div>
+                                <div class="reset-step-line" id="resetStepLine"></div>
+                                <div class="reset-step" id="resetStep2Indicator">
+                                    <div class="reset-step-circle">2</div>
+                                    <span>Code</span>
+                                </div>
+                                <div class="reset-step-line" id="resetStepLine2"></div>
+                                <div class="reset-step" id="resetStep3Indicator">
+                                    <div class="reset-step-circle"><i class="fas fa-check"></i></div>
+                                    <span>Succès</span>
+                                </div>
+                            </div>
+
+                            <!-- Étape 1 : Email -->
+                            <div id="resetEtape1">
+                                <h2>Mot de passe oublié ?</h2>
+                                <p class="auth-subtitle">Entrez votre email pour recevoir un code de réinitialisation.</p>
+
+                                <div class="form-group">
+                                    <label for="resetEmail">
+                                        <i class="fas fa-envelope"></i>
+                                        Adresse email
+                                    </label>
+                                    <input type="email" id="resetEmail" placeholder="votre@email.com" required
+                                        onkeydown="if(event.key==='Enter') demanderCodeReset()">
+                                    <p class="error-message hidden" id="resetEmailErreur"></p>
+                                </div>
+
+                                <div class="reset-info-box">
+                                    <i class="fas fa-circle-info"></i>
+                                    Si un compte est associé à cet email, vous recevrez un code à 6 chiffres.
+                                </div>
+
+                                <button type="button" onclick="demanderCodeReset()" class="btn-primary" id="btnDemanderCode">
+                                    <i class="fas fa-paper-plane"></i>
+                                    Envoyer le code
+                                </button>
+                            </div>
+
+                            <!-- Étape 2 : Code + nouveau MDP -->
+                            <div id="resetEtape2" class="hidden">
+                                <h2>Nouveau mot de passe</h2>
+                                <p class="auth-subtitle">Entrez le code reçu et choisissez un nouveau mot de passe.</p>
+
+                                <!-- Email confirmé -->
+                                <div class="reset-email-confirme">
+                                    <i class="fas fa-envelope-open-text"></i>
+                                    Code envoyé à <strong id="resetEmailAffiche"></strong>
+                                    <a href="#" class="reset-modifier-lien" onclick="resetRetourEtape1(); return false;">Modifier</a>
+                                </div>
+
+                                <div class="form-group">
+                                    <div class="label-row">
+                                        <label for="resetCode">
+                                            <i class="fas fa-hashtag"></i>
+                                            Code à 6 chiffres
+                                        </label>
+                                        <button type="button" class="btn-renvoyer" id="btnRenvoyer" onclick="demanderCodeReset()" disabled>
+                                            Renvoyer (<span id="resetTimer">60</span>s)
+                                        </button>
+                                    </div>
+                                    <input type="text" id="resetCode" placeholder="• • • • • •"
+                                        maxlength="6" inputmode="numeric" autocomplete="one-time-code"
+                                        class="input-code-reset"
+                                        oninput="this.value=this.value.replace(/\D/g,'').slice(0,6); verifierCodeComplet()"
+                                        onkeydown="if(event.key==='Enter') reinitialiserMotDePasse()">
+                                    <div class="code-valide-hint hidden" id="codeValideHint">
+                                        <i class="fas fa-circle-check"></i> Code complet
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="resetNouveauMdp">
+                                        <i class="fas fa-lock"></i>
+                                        Nouveau mot de passe
+                                    </label>
+                                    <input type="password" id="resetNouveauMdp" placeholder="Min. 12 car., 1 maj., 1 chiff."
+                                        oninput="majForceMdp()" onkeydown="if(event.key==='Enter') reinitialiserMotDePasse()">
+                                    <!-- Indicateur de force -->
+                                    <div class="force-mdp hidden" id="forceMdpContainer">
+                                        <div class="force-barres">
+                                            <div class="force-barre" id="forceBarre1"></div>
+                                            <div class="force-barre" id="forceBarre2"></div>
+                                            <div class="force-barre" id="forceBarre3"></div>
+                                            <div class="force-barre" id="forceBarre4"></div>
+                                            <span class="force-label" id="forceLabel"></span>
+                                        </div>
+                                        <ul class="force-regles">
+                                            <li id="regleLongueur"><i class="fas fa-circle"></i> 12 caractères minimum</li>
+                                            <li id="regleMajuscule"><i class="fas fa-circle"></i> 1 lettre majuscule</li>
+                                            <li id="regleMinuscule"><i class="fas fa-circle"></i> 1 lettre minuscule</li>
+                                            <li id="regleChiffre"><i class="fas fa-circle"></i> 1 chiffre</li>
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="resetConfirmMdp">
+                                        <i class="fas fa-shield-halved"></i>
+                                        Confirmer le mot de passe
+                                    </label>
+                                    <input type="password" id="resetConfirmMdp" placeholder="••••••••"
+                                        oninput="verifierCorrespondance()"
+                                        onkeydown="if(event.key==='Enter') reinitialiserMotDePasse()">
+                                    <div class="erreur-match hidden" id="erreurMatch">
+                                        <i class="fas fa-triangle-exclamation"></i>
+                                        Les mots de passe ne correspondent pas
+                                    </div>
+                                </div>
+
+                                <p class="error-message hidden" id="resetMdpErreur"></p>
+
+                                <button type="button" onclick="reinitialiserMotDePasse()" class="btn-primary" id="btnReinitialiser">
+                                    <i class="fas fa-key"></i>
+                                    Réinitialiser le mot de passe
+                                </button>
+                            </div>
+
+                            <!-- Étape 3 : Succès -->
+                            <div id="resetEtape3" class="hidden reset-succes">
+                                <div class="reset-succes-icone">
+                                    <i class="fas fa-circle-check"></i>
+                                </div>
+                                <h2>Mot de passe mis à jour !</h2>
+                                <p class="auth-subtitle">
+                                    Votre mot de passe a été réinitialisé avec succès.<br>
+                                    Vous pouvez maintenant vous connecter.
+                                </p>
+                                <button type="button" onclick="afficherPageConnexion()" class="btn-primary">
+                                    <i class="fas fa-sign-in-alt"></i>
+                                    Se connecter
+                                </button>
+                            </div>
+
+                            <p class="switch-text" id="resetRetourLien">
+                                <a href="#" onclick="afficherPageConnexion(); return false;">
+                                    <i class="fas fa-arrow-left"></i>
+                                    Retour à la connexion
+                                </a>
+                            </p>
+                        </div>
                     </div>
-                </div>
-
-                <!-- Controles de pagination -->
-                <div class="pagination-controls hidden" id="controlesPagination">
-                    <button type="button" onclick="pagePrecedenteFavoris()" class="btn-page" id="boutonPagePrec" disabled>
-                        <i class="fas fa-chevron-left"></i>
-                    </button>
-                    <span class="page-info" id="infoPage">Page 1 / 1</span>
-                    <button type="button" onclick="pageSuivanteFavoris()" class="btn-page" id="boutonPageSuiv" disabled>
-                        <i class="fas fa-chevron-right"></i>
-                    </button>
                 </div>
             </div>
-        </div>
 
-        <!-- ═══════════════════════════════════════════════════════════════
-             PAGE PROFIL
-        ════════════════════════════════════════════════════════════════ -->
-        <div id="pageProfil" class="page">
-            <div class="header">
-                <div class="logo-small">
-                    <i class="fas fa-quote-right"></i>
-                    <h2>QuoteKeeper</h2>
+            <!-- PAGE INSCRIPTION -->
+            <div id="pageInscription" class="page">
+                <div class="auth-split">
+                    <div class="auth-brand">
+                        <div class="auth-brand-inner">
+                            <div class="auth-brand-logo">
+                                <i class="fas fa-quote-right"></i>
+                            </div>
+                            <h1>QuoteKeeper</h1>
+                            <p>Rejoignez des milliers de passionnés de citations</p>
+                            <div class="auth-features">
+                                <div class="auth-feature">
+                                    <i class="fas fa-bolt"></i>
+                                    Accès illimité aux citations
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-heart"></i>
+                                    Sauvegardez vos favoris
+                                </div>
+                                <div class="auth-feature">
+                                    <i class="fas fa-robot"></i>
+                                    Assistant IA personnel
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="auth-form-side">
+                        <div class="form-container">
+                            <h2>Inscription</h2>
+                            <p class="auth-subtitle">Créez votre compte gratuitement.</p>
+
+                            <div class="form-group">
+                                <label for="nomInscription">
+                                    <i class="fas fa-user"></i>
+                                    Nom
+                                </label>
+                                <input type="text" id="nomInscription" placeholder="Votre nom" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="courrielInscription">
+                                    <i class="fas fa-envelope"></i>
+                                    Email
+                                </label>
+                                <input type="email" id="courrielInscription" placeholder="votre@email.com" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="motDePasseInscription">
+                                    <i class="fas fa-lock"></i>
+                                    Mot de passe
+                                </label>
+                                <input type="password" id="motDePasseInscription" placeholder="••••••••" required>
+                                <small>Minimum 12 caracteres, 1 majuscule, 1 minuscule, 1 chiffre</small>
+                            </div>
+
+                            <button type="button" id="btnInscription" onclick="inscrireUtilisateur()" class="btn-primary">
+                                <i class="fas fa-user-plus"></i>
+                                Créer mon compte
+                            </button>
+
+                            <div class="google-divider"><span>ou</span></div>
+
+                            <button type="button" onclick="connexionGoogle()" class="btn-google">
+                                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                                </svg>
+                                Continuer avec Google
+                            </button>
+
+                            <p class="switch-text">
+                                Déjà inscrit ?
+                                <a href="#" onclick="afficherPageConnexion()">Se connecter</a>
+                            </p>
+                        </div>
+                    </div>
                 </div>
-                <div class="user-info">
-                    <button type="button" onclick="afficherPage('pagePrincipale')" class="btn-icon" title="Retour">
-                        <i class="fas fa-arrow-left"></i>
-                    </button>
-                    <button type="button" onclick="basculerTheme()" class="btn-icon" id="boutonThemeProfil" title="Changer le theme">
+            </div>
+
+        </div><!-- /.auth-container -->
+    </div><!-- /#authWrapper -->
+
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         PORTAIL — visible après connexion
+    ════════════════════════════════════════════════════════════════ -->
+    <div id="portalShell" class="portal-shell portal-hidden">
+
+        <!-- ─── BARRE LATERALE ─────────────────────────────────────────── -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-brand-icon">
+                    <i class="fas fa-quote-right"></i>
+                </div>
+                <span class="sidebar-brand-name">QuoteKeeper</span>
+            </div>
+
+            <nav class="sidebar-nav">
+                <button type="button" class="nav-item" id="navAccueil" onclick="afficherPage('pagePrincipale')">
+                    <i class="fas fa-home"></i>
+                    <span>Accueil</span>
+                </button>
+                <button type="button" class="nav-item" id="navProfil" onclick="afficherPageProfil()">
+                    <i class="fas fa-user-cog"></i>
+                    <span>Mon Profil</span>
+                </button>
+                <button type="button" class="nav-item nav-item-ai" id="navChat" onclick="afficherPageChat()">
+                    <i class="fas fa-robot"></i>
+                    <span>Assistant IA</span>
+                    <span class="nav-ai-dot"></span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="sidebar-user" id="affichageNomUtilisateur">
+                    <i class="fas fa-user-circle"></i>
+                    <span id="nomUtilisateur">Utilisateur</span>
+                </div>
+                <div class="sidebar-controls">
+                    <button type="button" onclick="basculerTheme()" class="sidebar-icon-btn" id="boutonTheme" title="Changer le theme">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <button type="button" onclick="deconnecterUtilisateur()" class="btn-icon" title="Deconnexion">
+                    <button type="button" onclick="deconnecterUtilisateur()" class="sidebar-icon-btn sidebar-logout-btn" title="Déconnexion">
                         <i class="fas fa-sign-out-alt"></i>
                     </button>
                 </div>
             </div>
+        </aside>
 
-            <!-- Informations du compte -->
-            <div class="profile-section">
-                <h3><i class="fas fa-id-card"></i> Informations du compte</h3>
-                <div class="profile-info-grid">
-                    <div class="profile-info-item">
-                        <span class="profile-info-label">Nom actuel</span>
-                        <span class="profile-info-value" id="nomProfilAffichage">—</span>
+        <!-- ─── CONTENU PRINCIPAL ──────────────────────────────────────── -->
+        <main class="portal-main">
+
+            <!-- ══════════════════════
+                 PAGE PRINCIPALE
+            ══════════════════════ -->
+            <div id="pagePrincipale" class="page portal-page">
+
+                <div class="portal-topbar">
+                    <div class="topbar-left">
+                        <h1 class="topbar-title">
+                            <i class="fas fa-compass"></i>
+                            Accueil
+                        </h1>
+                        <span class="topbar-subtitle">Découvrez et collectionnez des citations inspirantes</span>
                     </div>
-                    <div class="profile-info-item">
-                        <span class="profile-info-label">Email</span>
-                        <span class="profile-info-value" id="emailProfilAffichage">—</span>
+                </div>
+
+                <div class="portal-content">
+                    <div class="dashboard-grid">
+
+                        <!-- Colonne principale : carte + actions -->
+                        <div class="dashboard-main">
+
+                            <div class="quote-card" id="carteCitation">
+                                <!-- État vide (CSS :has affiche ce bloc quand auteurCitation est vide) -->
+                                <div class="quote-empty">
+                                    <div class="quote-empty-icon">
+                                        <i class="fas fa-quote-left"></i>
+                                    </div>
+                                    <p class="quote-empty-title">Votre prochaine citation vous attend</p>
+                                    <p class="quote-empty-hint">Appuyez sur <strong>Nouvelle citation</strong> pour commencer</p>
+                                </div>
+                                <!-- Corps de la citation (affiché quand une citation est chargée) -->
+                                <div class="quote-body">
+                                    <div class="quote-mark">"</div>
+                                    <p class="quote-text" id="texteCitation"></p>
+                                    <p class="quote-author" id="auteurCitation"></p>
+                                </div>
+                                <div id="zoneTraduction" class="translation-zone hidden">
+                                    <div class="translation-label">
+                                        <i class="fas fa-language"></i>
+                                        Traduction en français :
+                                    </div>
+                                    <p class="translation-text" id="texteTraduction"></p>
+                                </div>
+                            </div>
+
+                            <!-- Filtres -->
+                            <div class="filter-panel">
+                                <div class="filter-group">
+                                    <label for="filtreCategorie" title="Filtrer par categorie">
+                                        <i class="fas fa-tag"></i>
+                                    </label>
+                                    <select id="filtreCategorie" title="Filtrer par categorie" aria-label="Filtrer par categorie">
+                                        <option value="">Toutes categories</option>
+                                        <option value="art">Art</option>
+                                        <option value="courage">Courage</option>
+                                        <option value="death">Death</option>
+                                        <option value="faith">Faith</option>
+                                        <option value="fear">Fear</option>
+                                        <option value="freedom">Freedom</option>
+                                        <option value="happiness">Happiness</option>
+                                        <option value="humor">Humor</option>
+                                        <option value="inspirational">Inspirational</option>
+                                        <option value="leadership">Leadership</option>
+                                        <option value="life">Life</option>
+                                        <option value="love">Love</option>
+                                        <option value="nature">Nature</option>
+                                        <option value="philosophy">Philosophy</option>
+                                        <option value="relationships">Relationships</option>
+                                        <option value="success">Success</option>
+                                        <option value="time">Time</option>
+                                        <option value="truth">Truth</option>
+                                        <option value="wisdom">Wisdom</option>
+                                        <option value="writing">Writing</option>
+                                    </select>
+                                </div>
+                                <div class="filter-group">
+                                    <label for="filtreAuteur" title="Filtrer par auteur">
+                                        <i class="fas fa-user-pen"></i>
+                                    </label>
+                                    <input type="text" id="filtreAuteur" placeholder="Auteur...">
+                                </div>
+                                <button type="button" onclick="reinitialiserFiltres()" class="btn-filter-clear" id="boutonEffacerFiltres" title="Effacer les filtres">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+
+                            <!-- Actions -->
+                            <div class="quote-actions">
+                                <button type="button" onclick="obtenirCitationAleatoire()" class="btn-primary" id="boutonNouvelleCitation">
+                                    <i class="fas fa-sync-alt"></i>
+                                    Nouvelle citation
+                                </button>
+                                <button type="button" onclick="ajouterCitationAuxFavoris()" class="btn-secondary" id="boutonAjouterFavori" disabled>
+                                    <i class="far fa-heart"></i>
+                                    Ajouter aux favoris
+                                </button>
+                                <button type="button" onclick="traduireCitationCourante()" class="btn-outline" id="boutonTraduire" disabled>
+                                    <i class="fas fa-language"></i>
+                                    Traduire
+                                </button>
+                                <button type="button" onclick="copierCitationCourante()" class="btn-outline" id="boutonCopierCitation" disabled>
+                                    <i class="fas fa-copy"></i>
+                                    Copier
+                                </button>
+                            </div>
+
+                            <!-- Citation personnalisee -->
+                            <div class="custom-quote-panel">
+                                <div class="section-header">
+                                    <h3>
+                                        <i class="fas fa-pen"></i>
+                                        Ajouter ma propre citation
+                                    </h3>
+                                </div>
+                                <div class="custom-quote-grid">
+                                    <div class="form-group">
+                                        <label for="texteCitationPersonnalisee">Texte</label>
+                                        <textarea id="texteCitationPersonnalisee" rows="3" placeholder="Ecrivez votre citation..."></textarea>
+                                    </div>
+                                    <div class="custom-quote-meta">
+                                        <div class="form-group">
+                                            <label for="auteurCitationPersonnalisee">Auteur</label>
+                                            <input type="text" id="auteurCitationPersonnalisee" placeholder="Auteur">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="categorieCitationPersonnalisee">Categorie</label>
+                                            <input type="text" id="categorieCitationPersonnalisee" placeholder="Ex: motivation">
+                                        </div>
+                                        <button type="button" onclick="utiliserCitationPersonnalisee()" class="btn-primary">
+                                            <i class="fas fa-wand-magic-sparkles"></i>
+                                            Utiliser ma citation
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Colonne laterale : citation du jour + favoris -->
+                        <div class="dashboard-side">
+
+                            <!-- Citation du jour -->
+                            <div class="daily-quote-section" id="sectionCitationDuJour">
+                                <div class="daily-quote-header">
+                                    <i class="fas fa-sun"></i>
+                                    <span>Citation du jour</span>
+                                </div>
+                                <div class="daily-quote-content" id="citationDuJour">
+                                    <span class="daily-loading">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Favoris -->
+                            <div class="favorites-section">
+                                <div class="section-header">
+                                    <h3>
+                                        <i class="fas fa-heart"></i>
+                                        Mes favoris
+                                    </h3>
+                                    <span class="favorites-count" id="compteurFavoris">0</span>
+                                </div>
+
+                                <div class="favorites-toolbar">
+                                    <div class="search-box">
+                                        <i class="fas fa-search"></i>
+                                        <input type="search" id="champRechercheFavoris" placeholder="Rechercher par texte ou auteur">
+                                    </div>
+                                </div>
+
+                                <div id="listeFavoris" class="favorites-list">
+                                    <div class="loading-spinner">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                        Chargement...
+                                    </div>
+                                </div>
+
+                                <div class="pagination-controls hidden" id="controlesPagination">
+                                    <button type="button" onclick="pagePrecedenteFavoris()" class="btn-page" id="boutonPagePrec" disabled aria-label="Page precedente">
+                                        <i class="fas fa-chevron-left"></i>
+                                    </button>
+                                    <span class="page-info" id="infoPage">Page 1 / 1</span>
+                                    <button type="button" onclick="pageSuivanteFavoris()" class="btn-page" id="boutonPageSuiv" disabled aria-label="Page suivante">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                        </div><!-- /.dashboard-side -->
+                    </div><!-- /.dashboard-grid -->
+                </div><!-- /.portal-content -->
+            </div><!-- /#pagePrincipale -->
+
+
+            <!-- ══════════════════════
+                 PAGE PROFIL
+            ══════════════════════ -->
+            <div id="pageProfil" class="page portal-page">
+
+                <div class="portal-topbar">
+                    <div class="topbar-left topbar-with-back">
+                        <button type="button" class="topbar-back-btn" onclick="afficherPage('pagePrincipale')" title="Retour">
+                            <i class="fas fa-arrow-left"></i>
+                        </button>
+                        <div>
+                            <h1 class="topbar-title">Mon Profil</h1>
+                            <span class="topbar-subtitle">Gérez vos informations personnelles</span>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Formulaire modifier le nom -->
-            <div class="profile-section">
-                <h3><i class="fas fa-user-edit"></i> Modifier le nom</h3>
-                <div class="form-group">
-                    <label for="nomNouveauProfil">Nouveau nom</label>
-                    <input type="text" id="nomNouveauProfil" placeholder="Votre nouveau nom">
-                </div>
-                <button type="button" onclick="mettreAJourNomProfil()" class="btn-primary profile-btn">
-                    <i class="fas fa-save"></i>
-                    Enregistrer le nom
-                </button>
-            </div>
+                <div class="portal-content portal-content-narrow">
 
-            <!-- Formulaire changer le mot de passe -->
-            <div class="profile-section" id="sectionMotDePasse">
-                <h3><i class="fas fa-key"></i> Changer le mot de passe</h3>
-                <div class="form-group">
-                    <label for="motDePasseActuel">Mot de passe actuel</label>
-                    <input type="password" id="motDePasseActuel" placeholder="Mot de passe actuel">
-                </div>
-                <div class="form-group">
-                    <label for="nouveauMotDePasse">Nouveau mot de passe</label>
-                    <input type="password" id="nouveauMotDePasse" placeholder="Minimum 6 caracteres">
-                </div>
-                <div class="form-group">
-                    <label for="confirmationMotDePasse">Confirmer le nouveau mot de passe</label>
-                    <input type="password" id="confirmationMotDePasse" placeholder="Repetez le nouveau mot de passe">
-                </div>
-                <button type="button" onclick="changerMotDePasse()" class="btn-secondary profile-btn">
-                    <i class="fas fa-shield-halved"></i>
-                    Changer le mot de passe
-                </button>
-            </div>
-        </div>
+                    <!-- Informations du compte -->
+                    <div class="profile-section">
+                        <h3><i class="fas fa-id-card"></i> Informations du compte</h3>
+                        <div class="profile-info-grid">
+                            <div class="profile-info-item">
+                                <span class="profile-info-label">Nom actuel</span>
+                                <span class="profile-info-value" id="nomProfilAffichage">—</span>
+                            </div>
+                            <div class="profile-info-item">
+                                <span class="profile-info-label">Email</span>
+                                <span class="profile-info-value" id="emailProfilAffichage">—</span>
+                            </div>
+                        </div>
+                    </div>
 
-    </div><!-- /.container -->
+                    <!-- Modifier le nom -->
+                    <div class="profile-section">
+                        <h3><i class="fas fa-user-edit"></i> Modifier le nom</h3>
+                        <div class="form-group">
+                            <label for="nomNouveauProfil">Nouveau nom</label>
+                            <input type="text" id="nomNouveauProfil" placeholder="Votre nouveau nom">
+                        </div>
+                        <button type="button" onclick="mettreAJourNomProfil()" class="btn-primary profile-btn">
+                            <i class="fas fa-save"></i>
+                            Enregistrer le nom
+                        </button>
+                    </div>
 
-    <!-- Template HTML pour un item de favori -->
+                    <!-- Changer le mot de passe -->
+                    <div class="profile-section" id="sectionMotDePasse">
+                        <h3><i class="fas fa-key"></i> Changer le mot de passe</h3>
+                        <div class="form-group">
+                            <label for="motDePasseActuel">Mot de passe actuel</label>
+                            <input type="password" id="motDePasseActuel" placeholder="Mot de passe actuel">
+                        </div>
+                        <div class="form-group">
+                            <label for="nouveauMotDePasse">Nouveau mot de passe</label>
+                            <input type="password" id="nouveauMotDePasse" placeholder="Minimum 12 caracteres">
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmationMotDePasse">Confirmer le nouveau mot de passe</label>
+                            <input type="password" id="confirmationMotDePasse" placeholder="Repetez le nouveau mot de passe">
+                        </div>
+                        <button type="button" onclick="changerMotDePasse()" class="btn-secondary profile-btn">
+                            <i class="fas fa-shield-halved"></i>
+                            Changer le mot de passe
+                        </button>
+                    </div>
+
+                </div><!-- /.portal-content -->
+            </div><!-- /#pageProfil -->
+
+
+            <!-- ══════════════════════
+                 PAGE CHAT IA
+            ══════════════════════ -->
+            <div id="pageChat" class="page portal-page">
+
+                <div class="portal-topbar">
+                    <div class="topbar-left topbar-with-back">
+                        <button type="button" class="topbar-back-btn" onclick="afficherPage('pagePrincipale')" title="Retour">
+                            <i class="fas fa-arrow-left"></i>
+                        </button>
+                        <div class="topbar-ai-label">
+                            <h1 class="topbar-title">
+                                <i class="fas fa-robot"></i>
+                                Assistant IA
+                                <span class="chat-statut-point"></span>
+                            </h1>
+                            <span class="topbar-subtitle">Assistant littéraire · Groq AI (Llama 3.3)</span>
+                        </div>
+                    </div>
+                    <div class="topbar-right">
+                        <button type="button" onclick="reinitialiserChat()" class="topbar-icon-btn" title="Nouvelle conversation">
+                            <i class="fas fa-rotate-right"></i>
+                        </button>
+                        <button type="button" onclick="basculerTheme()" class="topbar-icon-btn" id="boutonThemeChat" title="Changer le theme">
+                            <i class="fas fa-moon"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Actions rapides -->
+                <div class="chat-actions-rapides" id="chatActionsRapides">
+                    <p class="chat-actions-titre">Suggestions :</p>
+                    <div class="chat-actions-grille">
+                        <button type="button" class="chat-action-btn" onclick="actionRapideChat('analyze','Analyser mes favoris',null)">
+                            <i class="fas fa-chart-pie"></i> Analyser mes favoris
+                        </button>
+                        <button type="button" class="chat-action-btn" onclick="actionRapideChat('recommend','Citations joyeuses','Je me sens joyeux et optimiste')">
+                            <i class="fas fa-sun"></i> Citations joyeuses
+                        </button>
+                        <button type="button" class="chat-action-btn" onclick="actionRapideChat('recommend','Citations philosophiques','Je veux réfléchir sur le sens de la vie')">
+                            <i class="fas fa-book"></i> Citations philosophiques
+                        </button>
+                        <button type="button" class="chat-action-btn" onclick="actionRapideChat('recommend','Citations motivantes','J\'ai besoin de motivation et d\'énergie')">
+                            <i class="fas fa-bolt"></i> Citations motivantes
+                        </button>
+                        <button type="button" class="chat-action-btn" onclick="actionRapideChat('recommend','Citations réconfortantes','Je me sens triste et j\'ai besoin de réconfort')">
+                            <i class="fas fa-heart"></i> Citations réconfortantes
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Zone de messages -->
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Injecte par JS -->
+                </div>
+
+                <!-- Zone de saisie -->
+                <div class="chat-saisie-wrap">
+                    <textarea
+                        id="chatSaisie"
+                        class="chat-saisie"
+                        placeholder="Posez une question sur les citations…"
+                        rows="1"
+                        maxlength="1000"
+                        onkeydown="chatKeyDown(event)"
+                    ></textarea>
+                    <button type="button" onclick="envoyerMessageChat()" class="chat-btn-envoyer" id="chatBtnEnvoyer" title="Envoyer le message">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+
+            </div><!-- /#pageChat -->
+
+        </main><!-- /.portal-main -->
+    </div><!-- /#portalShell -->
+
+
+    <!-- ─── Template item favori ───────────────────────────────────────────── -->
     <template id="modeleFavori">
         <div class="favorite-item">
             <div class="favorite-content">
                 <p class="favorite-text"></p>
                 <p class="favorite-author"></p>
                 <p class="favorite-note hidden"></p>
+                <p class="favorite-tag hidden"></p>
             </div>
             <div class="favorite-actions">
-                <button class="btn-icon ask-ai" title="Demander à l'IA d'expliquer cette citation">
-                    <i class="fas fa-robot"></i>
-                </button>
                 <button class="btn-icon edit-note" title="Modifier la note personnelle">
                     <i class="fas fa-sticky-note"></i>
+                </button>
+                <button class="btn-icon edit-tag" title="Modifier le tag">
+                    <i class="fas fa-tag"></i>
                 </button>
                 <button class="btn-icon copy-favorite" title="Copier la citation">
                     <i class="fas fa-copy"></i>
@@ -443,39 +791,10 @@
         </div>
     </template>
 
-    <!-- Toast de notification (succes / confirmation) -->
+    <!-- ─── Toast de notification ─────────────────────────────────────────── -->
     <div id="toastNotification" class="toast hidden">
         <i class="fas fa-check-circle"></i>
         <span id="toastMessage">Operation reussie</span>
-    </div>
-
-    <!-- Bouton flottant chatbot -->
-    <button id="boutonChat" class="chat-fab hidden" onclick="toggleChat()" title="Assistant IA">
-        <i class="fas fa-robot"></i>
-    </button>
-
-    <!-- Panel de chat -->
-    <div id="panelChat" class="chat-panel hidden">
-        <div class="chat-header">
-            <div class="chat-header-info">
-                <i class="fas fa-robot"></i>
-                <span>Assistant QuoteKeeper</span>
-            </div>
-            <button class="chat-close" onclick="toggleChat()">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <div id="chatMessages" class="chat-messages">
-            <div class="chat-message bot">
-                <div class="chat-bubble">Bonjour ! Je suis votre assistant culturel. Posez-moi des questions sur vos citations, leurs auteurs, ou explorez des thèmes philosophiques et littéraires.</div>
-            </div>
-        </div>
-        <div class="chat-input-area">
-            <input type="text" id="chatInput" class="chat-input" placeholder="Posez votre question..." onkeydown="if(event.key==='Enter') envoyerMessage()">
-            <button class="chat-send" onclick="envoyerMessage()">
-                <i class="fas fa-paper-plane"></i>
-            </button>
-        </div>
     </div>
 
     <script src="js/script.js"></script>

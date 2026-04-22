@@ -10,18 +10,24 @@ La deconnexion est geree cote client (suppression du token JWT du localStorage).
 Le serveur ne maintient pas de session — l'architecture est stateless.
 """
 
+import os
 import re
 from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 from pymongo.errors import DuplicateKeyError
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
-from app.auth import creer_jeton_acces, generer_hash_mot_de_passe, verifier_jeton, verifier_mot_de_passe
+from app.auth import DUREE_EXPIRATION_JETON_MINUTES, creer_jeton_acces, generer_hash_mot_de_passe, revoquer_jeton, verifier_jeton, verifier_mot_de_passe
 from app.database import obtenir_collection_utilisateurs
 from app.demo_store import get_demo_user_by_email, update_demo_user_profile, upsert_demo_user
+from app.dependencies import obtenir_utilisateur_courant
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -36,21 +42,35 @@ class DonneesCreationUtilisateur(BaseModel):
     Contraintes :
     - nom          : 2 a 50 caracteres, espaces superflus supprimes
     - email        : format valide, converti en minuscules
-    - mot_de_passe : 6 a 72 caracteres (72 est la limite de PBKDF2-SHA256)
+    - mot_de_passe : 12 a 72 caracteres, avec majuscule, minuscule et chiffre obligatoires
     """
     nom: str = Field(..., min_length=2, max_length=50)
     email: str
-    mot_de_passe: str = Field(..., min_length=6, max_length=72)
+    mot_de_passe: str = Field(..., min_length=12, max_length=72)
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "nom": "Dupont",
                 "email": "jean.dupont@email.com",
-                "mot_de_passe": "password123",
+                "mot_de_passe": "MotDePasseForT!2026",
             }
         }
     }
+
+    @field_validator("mot_de_passe")
+    @classmethod
+    def valider_mot_de_passe(cls, valeur: str) -> str:
+        """Verifie la complexite du mot de passe."""
+        if len(valeur) < 12:
+            raise ValueError("Le mot de passe doit contenir au moins 12 caracteres")
+        if not any(c.isupper() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins une majuscule")
+        if not any(c.islower() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins une minuscule")
+        if not any(c.isdigit() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins un chiffre")
+        return valeur
 
     @field_validator("nom")
     @classmethod
@@ -152,7 +172,8 @@ def construire_reponse_utilisateur(utilisateur: dict) -> ReponseUtilisateur:
     status_code=status.HTTP_201_CREATED,
     summary="Inscription d'un nouvel utilisateur",
 )
-async def inscription(utilisateur: DonneesCreationUtilisateur):
+@limiter.limit("5/minute")
+async def inscription(request: Request, response: Response, utilisateur: DonneesCreationUtilisateur):
     """
     Cree un nouveau compte utilisateur et retourne un token JWT.
 
@@ -167,10 +188,15 @@ async def inscription(utilisateur: DonneesCreationUtilisateur):
         # Genereration d'un ID demo base sur l'email
         identifiant_demo = f"demo_{re.sub(r'[^a-z0-9]', '_', utilisateur.email)}"
         utilisateur_demo = upsert_demo_user(identifiant_demo, utilisateur.nom, utilisateur.email)
+        jeton_acces = creer_jeton_acces(
+            {"sub": utilisateur_demo["id"], "email": utilisateur_demo["email"]}
+        )
+        response.set_cookie(
+            key="qk_token", value=jeton_acces, httponly=True, samesite="strict",
+            max_age=60 * DUREE_EXPIRATION_JETON_MINUTES,
+        )
         return ReponseJeton(
-            access_token=creer_jeton_acces(
-                {"sub": utilisateur_demo["id"], "email": utilisateur_demo["email"]}
-            ),
+            access_token=jeton_acces,
             user=construire_reponse_utilisateur(utilisateur_demo),
         )
 
@@ -191,16 +217,20 @@ async def inscription(utilisateur: DonneesCreationUtilisateur):
     try:
         resultat = collection_utilisateurs.insert_one(document_utilisateur)
     except DuplicateKeyError:
-        # L'index unique sur email empeche les doublons
+        # Message generique : ne pas confirmer si l'email existe deja (previent l'enumeration)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Un compte avec cet email existe deja",
+            detail="Impossible de creer le compte. Verifiez vos informations.",
         )
 
     # Relecture du document insere pour avoir l'_id genere par MongoDB
     utilisateur_cree = collection_utilisateurs.find_one({"_id": resultat.inserted_id})
     jeton_acces = creer_jeton_acces(
         {"sub": str(utilisateur_cree["_id"]), "email": utilisateur_cree["email"]}
+    )
+    response.set_cookie(
+        key="qk_token", value=jeton_acces, httponly=True, samesite="strict",
+        max_age=60 * DUREE_EXPIRATION_JETON_MINUTES,
     )
     return ReponseJeton(
         access_token=jeton_acces,
@@ -213,7 +243,8 @@ async def inscription(utilisateur: DonneesCreationUtilisateur):
     response_model=ReponseJeton,
     summary="Connexion d'un utilisateur",
 )
-async def connexion(utilisateur: DonneesConnexionUtilisateur):
+@limiter.limit("10/minute")
+async def connexion(request: Request, response: Response, utilisateur: DonneesConnexionUtilisateur):
     """
     Authentifie un utilisateur existant et retourne un token JWT.
 
@@ -226,18 +257,29 @@ async def connexion(utilisateur: DonneesConnexionUtilisateur):
     """
     collection_utilisateurs = obtenir_collection_utilisateurs()
 
-    # Mode demo : seul le compte demo est accepte
+    # Mode demo : seul le compte demo est accepte (credentials configures via .env)
+    _DEMO_EMAIL = os.getenv("DEMO_EMAIL", "demo@example.com")
+    _DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "")
     if collection_utilisateurs is None:
-        if utilisateur.email == "demo@test.com" and utilisateur.mot_de_passe == "demo123":
+        if (
+            _DEMO_PASSWORD
+            and utilisateur.email == _DEMO_EMAIL
+            and utilisateur.mot_de_passe == _DEMO_PASSWORD
+        ):
             utilisateur_demo = get_demo_user_by_email(utilisateur.email)
             if utilisateur_demo is None:
                 # Creation du compte demo s'il n'existe pas encore
-                utilisateur_demo = upsert_demo_user("demo_123", "Utilisateur Demo", "demo@test.com")
+                utilisateur_demo = upsert_demo_user("demo_123", "Utilisateur Demo", _DEMO_EMAIL)
 
+            jeton_acces = creer_jeton_acces(
+                {"sub": utilisateur_demo["id"], "email": utilisateur_demo["email"]}
+            )
+            response.set_cookie(
+                key="qk_token", value=jeton_acces, httponly=True, samesite="strict",
+                max_age=60 * DUREE_EXPIRATION_JETON_MINUTES,
+            )
             return ReponseJeton(
-                access_token=creer_jeton_acces(
-                    {"sub": utilisateur_demo["id"], "email": utilisateur_demo["email"]}
-                ),
+                access_token=jeton_acces,
                 user=construire_reponse_utilisateur(utilisateur_demo),
             )
 
@@ -265,6 +307,11 @@ async def connexion(utilisateur: DonneesConnexionUtilisateur):
     jeton_acces = creer_jeton_acces(
         {"sub": str(utilisateur_trouve["_id"]), "email": utilisateur_trouve["email"]}
     )
+    response.set_cookie(
+        key="qk_token", value=jeton_acces, httponly=True, samesite="strict",
+        max_age=60 * DUREE_EXPIRATION_JETON_MINUTES,
+    )
+    print(f"[AUDIT] Connexion reussie : email={utilisateur.email}")
     return ReponseJeton(
         access_token=jeton_acces,
         user=construire_reponse_utilisateur(utilisateur_trouve),
@@ -272,14 +319,30 @@ async def connexion(utilisateur: DonneesConnexionUtilisateur):
 
 
 @router.post("/logout", summary="Deconnexion")
-async def deconnexion():
+async def deconnexion(
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    qk_token: Optional[str] = Cookie(None),
+):
     """
-    Confirme la deconnexion de l'utilisateur.
+    Invalide le token JWT de l'utilisateur et confirme la deconnexion.
 
-    Le token JWT est stateless : la vraie deconnexion est geree cote client
-    en supprimant le token du localStorage. Cet endpoint retourne simplement
-    une confirmation pour que le frontend sache que la requete a abouti.
+    Le token est ajoute a la liste noire serveur — meme s'il n'est pas encore expire,
+    il sera refuse par verifier_jeton. Cela empeche la reutilisation d'un token vole.
+    Le cookie httpOnly est efface pour les clients web.
     """
+    token = None
+    if authorization:
+        morceaux = authorization.split()
+        if len(morceaux) == 2 and morceaux[0].lower() == "bearer":
+            token = morceaux[1]
+    elif qk_token:
+        token = qk_token
+
+    if token:
+        revoquer_jeton(token)
+
+    response.delete_cookie("qk_token")
     return {"status": "success", "message": "Deconnexion reussie"}
 
 
@@ -287,29 +350,6 @@ async def deconnexion():
 # DEPENDANCE JWT POUR LES ROUTES DE PROFIL
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def obtenir_utilisateur_courant_auth(authorization: Optional[str] = Header(None)):
-    """
-    Dependance FastAPI pour les routes de profil.
-    Extrait et valide le token JWT du header Authorization.
-    """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token d'authentification manquant",
-        )
-    morceaux = authorization.split()
-    if len(morceaux) != 2 or morceaux[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Format de token invalide",
-        )
-    identifiant = verifier_jeton(morceaux[1])
-    if not identifiant:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide ou expire",
-        )
-    return identifiant
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +372,20 @@ class DonneesModificationProfil(BaseModel):
 class DonneesChangementMotDePasse(BaseModel):
     """Corps de la requete PUT /profile/password pour changer le mot de passe."""
     mot_de_passe_actuel: str = Field(..., min_length=1, max_length=72)
-    nouveau_mot_de_passe: str = Field(..., min_length=6, max_length=72)
+    nouveau_mot_de_passe: str = Field(..., min_length=12, max_length=72)
+
+    @field_validator("nouveau_mot_de_passe")
+    @classmethod
+    def valider_nouveau_mot_de_passe(cls, valeur: str) -> str:
+        if len(valeur) < 12:
+            raise ValueError("Le mot de passe doit contenir au moins 12 caracteres")
+        if not any(c.isupper() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins une majuscule")
+        if not any(c.islower() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins une minuscule")
+        if not any(c.isdigit() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins un chiffre")
+        return valeur
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -340,7 +393,7 @@ class DonneesChangementMotDePasse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/profile", summary="Obtenir le profil de l'utilisateur connecte")
-async def obtenir_profil(utilisateur_id: str = Depends(obtenir_utilisateur_courant_auth)):
+async def obtenir_profil(utilisateur_id: str = Depends(obtenir_utilisateur_courant)):
     """
     Retourne les informations publiques du compte de l'utilisateur connecte.
     Ne retourne jamais le hash du mot de passe.
@@ -381,7 +434,7 @@ async def obtenir_profil(utilisateur_id: str = Depends(obtenir_utilisateur_coura
 @router.put("/profile", summary="Modifier le nom d'affichage")
 async def modifier_profil(
     donnees: DonneesModificationProfil,
-    utilisateur_id: str = Depends(obtenir_utilisateur_courant_auth),
+    utilisateur_id: str = Depends(obtenir_utilisateur_courant),
 ):
     """
     Modifie le nom d'affichage de l'utilisateur connecte.
@@ -412,7 +465,7 @@ async def modifier_profil(
 @router.put("/profile/password", summary="Changer le mot de passe")
 async def changer_mot_de_passe(
     donnees: DonneesChangementMotDePasse,
-    utilisateur_id: str = Depends(obtenir_utilisateur_courant_auth),
+    utilisateur_id: str = Depends(obtenir_utilisateur_courant),
 ):
     """
     Change le mot de passe de l'utilisateur connecte.
@@ -458,8 +511,155 @@ async def changer_mot_de_passe(
             {"$set": {"mot_de_passe_hash": nouveau_hash, "modifie_le": datetime.now(timezone.utc)}},
         )
 
+        print(f"[AUDIT] Mot de passe modifie : user_id={utilisateur_id}")
         return {"status": "success", "message": "Mot de passe modifie avec succes"}
 
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DÉFINIR UN MOT DE PASSE (après vérification OTP — sans connaître l'ancien)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DefinirMotDePasse(BaseModel):
+    """Corps de la requete PUT /profile/set-password."""
+    nouveau_mot_de_passe: str = Field(..., min_length=12, max_length=72)
+
+    @field_validator("nouveau_mot_de_passe")
+    @classmethod
+    def valider_nouveau_mot_de_passe(cls, valeur: str) -> str:
+        if len(valeur) < 12:
+            raise ValueError("Le mot de passe doit contenir au moins 12 caracteres")
+        if not any(c.isupper() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins une majuscule")
+        if not any(c.islower() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins une minuscule")
+        if not any(c.isdigit() for c in valeur):
+            raise ValueError("Le mot de passe doit contenir au moins un chiffre")
+        return valeur
+
+
+@router.put("/profile/set-password", summary="Définir un mot de passe après vérification OTP")
+async def definir_mot_de_passe(
+    donnees: DefinirMotDePasse,
+    utilisateur_id: str = Depends(obtenir_utilisateur_courant),
+):
+    """
+    Définit (ou remplace) le mot de passe sans exiger l'ancien.
+
+    Réservé à l'usage post-OTP : le client doit présenter un JWT valide
+    obtenu juste avant via POST /auth/otp/verify.
+    Ne pas exposer ce endpoint sans authentification JWT.
+    """
+    collection_utilisateurs = obtenir_collection_utilisateurs()
+
+    if collection_utilisateurs is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Définition de mot de passe non disponible en mode demo",
+        )
+
+    try:
+        nouveau_hash = generer_hash_mot_de_passe(donnees.nouveau_mot_de_passe)
+        resultat = collection_utilisateurs.update_one(
+            {"_id": ObjectId(utilisateur_id)},
+            {"$set": {"mot_de_passe_hash": nouveau_hash, "modifie_le": datetime.now(timezone.utc)}},
+        )
+        if resultat.matched_count == 0:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouve")
+        return {"status": "success", "message": "Mot de passe defini avec succes"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SUPPRESSION DE COMPTE (RGPD)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.delete("/profile", summary="Supprimer le compte utilisateur (RGPD)")
+async def supprimer_compte(
+    utilisateur_id: str = Depends(obtenir_utilisateur_courant),
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Supprime definitivement le compte et toutes les donnees associees.
+    Revoque egalement le token JWT courant.
+    """
+    collection_utilisateurs = obtenir_collection_utilisateurs()
+
+    if collection_utilisateurs is None:
+        return {"status": "success", "message": "Compte demo supprime (donnees en memoire effacees)"}
+
+    try:
+        resultat = collection_utilisateurs.delete_one({"_id": ObjectId(utilisateur_id)})
+        if resultat.deleted_count == 0:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouve")
+
+        if authorization:
+            morceaux = authorization.split()
+            if len(morceaux) == 2 and morceaux[0].lower() == "bearer":
+                revoquer_jeton(morceaux[1])
+
+        print(f"[AUDIT] Compte supprime : user_id={utilisateur_id}")
+        return {"status": "success", "message": "Compte supprime avec succes"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPORT DES DONNÉES PERSONNELLES (RGPD)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/profile/export", summary="Exporter les donnees personnelles (RGPD)")
+async def exporter_donnees(utilisateur_id: str = Depends(obtenir_utilisateur_courant)):
+    """
+    Retourne toutes les donnees personnelles de l'utilisateur en JSON.
+    Conforme a l'article 20 du RGPD (droit a la portabilite).
+    """
+    collection_utilisateurs = obtenir_collection_utilisateurs()
+
+    if collection_utilisateurs is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Export non disponible en mode demo",
+        )
+
+    try:
+        utilisateur = collection_utilisateurs.find_one({"_id": ObjectId(utilisateur_id)})
+        if not utilisateur:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouve")
+
+        date_creation = utilisateur.get("cree_le")
+        date_modification = utilisateur.get("modifie_le")
+
+        export = {
+            "id": str(utilisateur["_id"]),
+            "nom": utilisateur["nom"],
+            "email": utilisateur["email"],
+            "cree_le": date_creation.isoformat() if hasattr(date_creation, "isoformat") else str(date_creation or ""),
+            "modifie_le": date_modification.isoformat() if hasattr(date_modification, "isoformat") else str(date_modification or ""),
+            "favoris": utilisateur.get("favorites", []),
+            "notes_favoris": {
+                k: v.get("note", "")
+                for k, v in utilisateur.get("favorite_quotes", {}).items()
+                if v.get("note")
+            },
+            "tags_favoris": {
+                k: v.get("tag", "")
+                for k, v in utilisateur.get("favorite_quotes", {}).items()
+                if v.get("tag")
+            },
+        }
+
+        print(f"[AUDIT] Export donnees : user_id={utilisateur_id}")
+        return export
     except HTTPException:
         raise
     except Exception as exc:

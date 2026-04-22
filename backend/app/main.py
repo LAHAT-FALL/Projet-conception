@@ -3,20 +3,110 @@ Point d'entree principal de l'API QuoteKeeper.
 """
 
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
-from fastapi.exceptions import HTTPException as StarletteHTTPException, RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
-from app.auth import verifier_jeton
-from app.database import obtenir_statut_base_donnees
-from app.routes import auth_routes, google_routes, quotes_routes, chat_routes
-from app.routes.quotes_routes import seeder_citations_secours
-
+# load_dotenv() DOIT etre appele avant d'importer les modules internes
+# car ils lisent les variables d'environnement au niveau module (SECRET_KEY, etc.)
 load_dotenv()
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import HTTPException as StarletteHTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html
+from fastapi.responses import HTMLResponse, JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.database import obtenir_statut_base_donnees
+from app.routes import ai_routes, auth_routes, google_routes, otp_routes, quotes_routes
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RATE LIMITER GLOBAL
+# ─────────────────────────────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODE PRODUCTION vs DEVELOPPEMENT
+# ─────────────────────────────────────────────────────────────────────────────
+ENV = os.getenv("ENV", "development")
+est_production = ENV == "production"
+
+# Les docs Swagger ne sont accessibles qu'en developpement
+_docs_url = None if est_production else "/api/docs"
+# ReDoc est gere par une route manuelle pour epingler la version JS (0.104.1 ignore redoc_js_url)
+_redoc_url = None  # desactive la route built-in dans tous les cas
+_REDOC_JS = "https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.js"
+
+
+_CSP_DOCS = (
+    # CSP permissive pour les pages de documentation (Swagger UI et ReDoc).
+    # Uniquement accessible en developpement (docs desactivees en production).
+    "default-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com "
+    "https://fonts.gstatic.com https://fastapi.tiangolo.com; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+    "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https:; "
+    "connect-src 'self' blob: https://cdn.jsdelivr.net; "
+    "worker-src blob:; "
+    "child-src blob:; "
+    "frame-ancestors 'none';"
+)
+
+_CSP_API = (
+    # CSP stricte pour tous les autres endpoints.
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https:; "
+    "connect-src 'self' https://accounts.google.com; "
+    "frame-ancestors 'none';"
+)
+
+_CHEMINS_DOCS = {"/api/docs", "/api/redoc", "/openapi.json"}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Ajoute les headers de securite HTTP a toutes les reponses."""
+
+    async def dispatch(self, request: Request, call_next):
+        reponse = await call_next(request)
+        # Empeche le MIME sniffing
+        reponse.headers["X-Content-Type-Options"] = "nosniff"
+        # Bloque le chargement dans des iframes (clickjacking)
+        reponse.headers["X-Frame-Options"] = "DENY"
+        # Protection XSS legacy (navigateurs anciens)
+        reponse.headers["X-XSS-Protection"] = "1; mode=block"
+        # Limite l'information envoyee dans le header Referer
+        reponse.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Force HTTPS pendant 1 an, y compris les sous-domaines
+        reponse.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # CSP adaptee : permissive pour les pages de doc, stricte pour l'API
+        csp = _CSP_DOCS if request.url.path in _CHEMINS_DOCS else _CSP_API
+        reponse.headers["Content-Security-Policy"] = csp
+        # Desactive les fonctionnalites sensibles du navigateur
+        reponse.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=(), payment=()"
+        )
+        return reponse
+
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Ajoute un identifiant unique a chaque requete pour l'audit et le debug."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = str(uuid.uuid4())
+        request.state.request_id = request_id
+        reponse = await call_next(request)
+        reponse.headers["X-Request-ID"] = request_id
+        return reponse
+
 
 application = FastAPI(
     title="QuoteKeeper API",
@@ -30,42 +120,65 @@ application = FastAPI(
     - gestion des favoris avec persistance MongoDB
     """,
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
     contact={
         "name": "Equipe de conception",
         "email": "equipe@example.com",
     },
 )
 
-origines_autorisees = [
-    "http://localhost",
-    "http://localhost:5500",
-    "http://127.0.0.1:5500",
-    "http://localhost:5501",
-    "http://127.0.0.1:5501",
-    "http://localhost:8081",
-    "http://127.0.0.1:8081",
-]
+# ─────────────────────────────────────────────────────────────────────────────
+# RATE LIMITING
+# ─────────────────────────────────────────────────────────────────────────────
+application.state.limiter = limiter
+application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+application.add_middleware(SlowAPIMiddleware)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HEADERS DE SECURITE & REQUEST ID
+# ─────────────────────────────────────────────────────────────────────────────
+application.add_middleware(SecurityHeadersMiddleware)
+application.add_middleware(RequestIdMiddleware)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CORS
+# ─────────────────────────────────────────────────────────────────────────────
+# Origines lues depuis CORS_ORIGINS (virgule-separees).
+# En production : ne lister que les domaines reels, pas localhost.
+_cors_env = os.getenv("CORS_ORIGINS", "https://localhost:5500,https://127.0.0.1:5500")
+origines_autorisees = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
 application.add_middleware(
     CORSMiddleware,
     allow_origins=origines_autorisees,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Methodes explicites — jamais "*" avec allow_credentials=True
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # Headers explicites — jamais "*" avec allow_credentials=True
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTEURS
+# ─────────────────────────────────────────────────────────────────────────────
 application.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentification"])
 application.include_router(google_routes.router, prefix="/api/auth", tags=["Authentification Google"])
+application.include_router(otp_routes.router, prefix="/api/auth", tags=["Authentification OTP"])
 application.include_router(quotes_routes.router, prefix="/api/quotes", tags=["Citations"])
-application.include_router(chat_routes.router, prefix="/api/chat", tags=["Chat"])
+application.include_router(ai_routes.router, prefix="/api/ai", tags=["IA"])
 
 
-@application.on_event("startup")
-async def au_demarrage():
-    """Initialise les donnees de base au demarrage du serveur."""
-    seeder_citations_secours()
+if not est_production:
+    @application.get("/api/redoc", include_in_schema=False, tags=["Documentation"])
+    async def redoc_personnalise(request: Request) -> HTMLResponse:
+        """ReDoc avec version JS epinglee (FastAPI 0.104.1 ignore redoc_js_url dans le constructeur)."""
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        return get_redoc_html(
+            openapi_url=root_path + "/openapi.json",
+            title="QuoteKeeper API - ReDoc",
+            redoc_js_url=_REDOC_JS,
+        )
 
 
 @application.get("/", tags=["Accueil"])
@@ -75,10 +188,6 @@ async def accueil():
         "service": "QuoteKeeper API",
         "version": "1.0.0",
         "status": "operationnel",
-        "documentation": {
-            "swagger": "/api/docs",
-            "redoc": "/api/redoc",
-        },
         "endpoints": {
             "auth": {
                 "register": "POST /api/auth/register",
@@ -108,22 +217,27 @@ async def accueil():
 @application.get("/api/auth/verify", tags=["Authentification"])
 async def verifier_token(request: Request):
     """
-    Verifie si le token JWT fourni en header Authorization est encore valide.
-
-    Utilise par le frontend au chargement de la page pour eviter de restaurer
-    une session avec un token expire. Retourne 401 si invalide.
+    Verifie si le token JWT (Bearer header ou cookie qk_token) est encore valide.
+    Retourne 401 si invalide.
     """
+    from app.auth import verifier_jeton as _verifier
+
+    # Priorite : Bearer header, puis cookie
+    token = None
     authorisation = request.headers.get("Authorization", "")
     morceaux = authorisation.split()
+    if len(morceaux) == 2 and morceaux[0].lower() == "bearer":
+        token = morceaux[1]
+    else:
+        token = request.cookies.get("qk_token")
 
-    if len(morceaux) != 2 or morceaux[0].lower() != "bearer":
+    if not token:
         return JSONResponse(
             status_code=401,
-            content={"valid": False, "detail": "Token manquant ou mal forme"},
+            content={"valid": False, "detail": "Token manquant"},
         )
 
-    identifiant = verifier_jeton(morceaux[1])
-
+    identifiant = _verifier(token)
     if not identifiant:
         return JSONResponse(
             status_code=401,
@@ -138,36 +252,10 @@ async def verification_sante():
     """Retourne l'etat courant du service et de la connexion MongoDB."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": obtenir_statut_base_donnees(),
         "api_key_configured": bool(os.getenv("NINJAS_API_KEY")),
     }
-
-
-@application.get("/api/config", tags=["Configuration"])
-async def lire_configuration():
-    """Retourne une vue non sensible de la configuration du backend."""
-    return {
-        "database": obtenir_statut_base_donnees(),
-        "cors_origins": origines_autorisees,
-        "jwt_algorithm": os.getenv("ALGORITHM", "HS256"),
-        "token_expiry": f"{os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES', '30')} minutes",
-        "ninjas_api": "configure" if os.getenv("NINJAS_API_KEY") else "fallback local actif",
-    }
-
-
-@application.exception_handler(RequestValidationError)
-async def gestionnaire_erreur_validation(request: Request, exc: RequestValidationError):
-    """Retourne les details de validation Pydantic pour faciliter le debogage."""
-    errors = [
-        {"loc": e["loc"], "msg": e["msg"], "type": e["type"], "input": str(e.get("input", ""))}
-        for e in exc.errors()
-    ]
-    print(f"[VALIDATION 422] body={exc.body!r} errors={errors}")
-    return JSONResponse(
-        status_code=422,
-        content={"status": "error", "code": 422, "detail": errors},
-    )
 
 
 @application.exception_handler(StarletteHTTPException)
@@ -180,6 +268,7 @@ async def gestionnaire_erreur_http(request: Request, exc: StarletteHTTPException
         404: "Ressource introuvable",
         405: "Methode non autorisee",
         422: "Donnees invalides",
+        429: "Trop de requetes — veuillez patienter",
         500: "Erreur interne du serveur",
     }
     return JSONResponse(
@@ -196,14 +285,15 @@ async def gestionnaire_erreur_http(request: Request, exc: StarletteHTTPException
 
 @application.exception_handler(Exception)
 async def gestionnaire_exception_globale(request: Request, exc: Exception):
-    """Retourne une reponse JSON standard en cas d'erreur non geree."""
+    """Retourne une reponse JSON standard en cas d'erreur non geree.
+    Le detail interne n'est jamais expose au client pour eviter la fuite d'information.
+    """
     return JSONResponse(
         status_code=500,
         content={
             "status": "error",
             "code": 500,
             "message": "Une erreur interne est survenue",
-            "detail": str(exc),
             "path": request.url.path,
         },
     )
