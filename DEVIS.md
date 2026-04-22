@@ -6,10 +6,10 @@
 QuoteKeeper
 
 ### Contexte
-QuoteKeeper est une application web developpee dans le cadre du cours `6GEI466 - Applications reseaux et securite informatique`. Le projet vise a demontrer la conception d'un portail web relie a un service web, avec persistance MongoDB et integration d'un service externe.
+QuoteKeeper est une application web developpee dans le cadre du cours `6GEI466 - Applications reseaux et securite informatique`. Le projet vise a demontrer la conception d'un portail web relie a un service web, avec persistance MongoDB et integration de services externes.
 
 ### Objectif
-L'objectif de l'application est de permettre a un utilisateur de consulter des citations, conserver ses citations favorites, rechercher dans sa collection personnelle et ajouter ses propres citations.
+L'objectif de l'application est de permettre a un utilisateur de consulter des citations, conserver ses citations favorites, rechercher dans sa collection personnelle, ajouter ses propres citations et interagir avec un assistant culturel propulse par l'IA.
 
 ### Public cible
 - etudiants
@@ -24,7 +24,9 @@ L'objectif de l'application est de permettre a un utilisateur de consulter des c
 - connexion et deconnexion (email/mot de passe ou Google OAuth 2.0)
 - authentification securisee par JWT
 - recuperation d'une citation aleatoire avec filtres par categorie et auteur
+- validation stricte de l'auteur (message d'erreur si aucune citation trouvee)
 - citation du jour (meme citation pour tous les utilisateurs dans la journee)
+- persistance MongoDB des citations recuperees via l'API Ninjas
 - traduction d'une citation en francais (service interne MyMemory)
 - copie rapide de la citation courante dans le presse-papier
 - ajout d'une citation aux favoris
@@ -32,15 +34,19 @@ L'objectif de l'application est de permettre a un utilisateur de consulter des c
 - suppression d'une citation favorite
 - consultation de la liste des favoris avec pagination
 - recherche dans les favoris (texte, auteur, categorie)
-- ajout d'une citation personnalisee
+- ajout d'une citation personnalisee avec choix de categorie (liste deroulante)
+- chatbot culturel IA (Groq / llama-3.3-70b-versatile) :
+  - bouton `Expliquer` sur la citation courante
+  - bouton robot sur chaque favori pour l'expliquer en contexte
+  - panel de chat flottant pour les questions libres
 - page de profil (modifier le nom, changer le mot de passe)
 - mode sombre / clair persistant (dark mode)
 
 ### Fonctionnalites de soutien
-- mode demonstration si MongoDB n'est pas disponible
-- liste locale de secours si l'API externe ne repond pas
+- liste locale de secours (FR+EN, toutes categories) si l'API externe ne repond pas
+- fallback MongoDB si l'API Ninjas est indisponible
 - documentation automatique de l'API avec Swagger et ReDoc
-- gestion uniforme des erreurs HTTP (400, 401, 403, 404, 500)
+- gestion uniforme des erreurs HTTP (400, 401, 403, 404, 429, 500, 502, 503)
 - toast de notification visuel pour les confirmations de succes
 - application du theme sombre sans flash au chargement
 
@@ -50,8 +56,9 @@ L'objectif de l'application est de permettre a un utilisateur de consulter des c
 - Python
 - FastAPI
 - PyMongo
-- passlib
-- JWT
+- passlib (PBKDF2)
+- JWT (PyJWT)
+- Groq SDK
 
 ### Frontend
 - HTML
@@ -60,15 +67,14 @@ L'objectif de l'application est de permettre a un utilisateur de consulter des c
 - appels AJAX avec `fetch`
 
 ### Base de donnees
-
 - MongoDB
 - MongoDB Compass
 
 ### Services externes
-
-- API Ninjas Quotes API (citations aleatoires)
+- API Ninjas Quotes API (citations aleatoires, v2)
 - MyMemory Translation API (traduction en francais)
 - Google OAuth 2.0 (authentification)
+- Groq API — modele `llama-3.3-70b-versatile` (chatbot IA)
 
 ## 4. Architecture generale
 
@@ -80,13 +86,15 @@ Portail web HTML/CSS/JavaScript
           | requetes HTTP / JSON (AJAX)
           v
 Service web FastAPI
-     |        |           |
-     |        |           +--> Google OAuth 2.0 (authentification)
-     |        |
-     |        +--> API Ninjas Quotes (citations aleatoires)
-     |        +--> MyMemory API      (traduction en francais)
+     |        |           |            |
+     |        |           |            +--> Groq API (chatbot IA)
+     |        |           +--> MyMemory API (traduction)
+     |        +--> API Ninjas Quotes v2 (citations aleatoires)
+     |        +--> Google OAuth 2.0 (authentification)
      |
      +--> MongoDB (persistance)
+               |-- collection users
+               |-- collection quotes
 ```
 
 Description :
@@ -94,9 +102,11 @@ Description :
 - le frontend affiche l'interface utilisateur et envoie des requetes AJAX au backend
 - le backend applique la logique applicative, gere l'authentification et retourne des reponses JSON
 - MongoDB assure la persistance des comptes, des favoris et des citations memorisees
-- API Ninjas fournit des citations reelles provenant d'un service externe
+- API Ninjas fournit des citations reelles provenant d'un service externe (v2)
+- les citations recuperees sont persistees dans MongoDB pour reutilisation ulterieure
 - MyMemory traduit les citations en francais (service gratuit, sans cle API)
 - Google OAuth 2.0 permet la connexion et l'inscription sans mot de passe
+- Groq (llama-3.3-70b-versatile) repond aux questions culturelles sur les citations
 
 ## 5. Maquettes des ecrans
 
@@ -159,22 +169,42 @@ Description :
 |                                                                  |
 | [tag] Categorie v  [user] Auteur...          [x effacer filtres] |
 |                                                                  |
-| [Nouvelle citation]  [Ajouter aux favoris]                       |
-| [Traduire]           [Copier]                                    |
+| [Nouvelle citation]    [Ajouter aux favoris]                     |
+| [Traduire]             [Expliquer (IA)]                          |
+| [Copier]                                                         |
 |                                                                  |
 | Ajouter ma propre citation                                       |
-| Texte: [...]  Auteur: [...]  Categorie: [...]  [Utiliser]        |
+| Texte: [...]  Auteur: [...]  Categorie: [v]  [Utiliser]          |
 |                                                                  |
 +------------------------------------------------------------------+
 | Mes citations favorites                                  [ 5 ]   |
 | Recherche: [.................................................]   |
 |                                                                  |
-| "Citation..."                    Auteur  [note][copier][retirer] |
+| "Citation..."          Auteur [robot][note][copier][retirer]     |
 |   Note : ma note personnelle                                     |
-| "Citation..."                    Auteur  [note][copier][retirer] |
+| "Citation..."          Auteur [robot][note][copier][retirer]     |
 |                                                                  |
 |            [ < Prec ]  Page 1 / 2  [ Suiv > ]                   |
 +------------------------------------------------------------------+
+                                              [robot flottant]
+```
+
+### Panel de chat (superpose en bas a droite)
+
+```text
++--------------------------------+
+| [robot] Assistant QuoteKeeper  [x] |
++--------------------------------+
+| Bot: Bonjour ! Je suis votre   |
+|      assistant culturel...     |
+|                                |
+| Vous: Qui est Nietzsche ?      |
+|                                |
+| Bot: Friedrich Nietzsche est   |
+|      un philosophe allemand... |
++--------------------------------+
+| [Posez votre question...] [>]  |
++--------------------------------+
 ```
 
 ### Page de profil
@@ -220,6 +250,7 @@ Description :
 | POST | /api/quotes/favorites/{id} | Ajouter une citation aux favoris |
 | PATCH | /api/quotes/favorites/{id}/note | Modifier la note sur un favori |
 | DELETE | /api/quotes/favorites/{id} | Retirer une citation des favoris |
+| POST | /api/chat | Envoyer un message au chatbot IA |
 | GET | /api/health | Verifier la sante du service |
 | GET | /api/config | Afficher la configuration non sensible |
 
@@ -239,19 +270,46 @@ Exemple de reponse :
 ```json
 {
   "texte_original": "The only way to do great work is to love what you do.",
-  "texte_traduit": "La seule façon de faire un excellent travail est d'aimer ce que vous faites.",
+  "texte_traduit": "La seule facon de faire un excellent travail est d'aimer ce que vous faites.",
   "langue_source": "en",
   "langue_cible": "fr"
 }
 ```
 
+### Detail de l'endpoint de chat
+
+#### POST /api/chat
+
+Corps de la requete :
+
+```json
+{
+  "message": "Qui est l'auteur de cette citation ?",
+  "citation": {
+    "text": "...",
+    "author": "...",
+    "category": "..."
+  }
+}
+```
+
+Le champ `citation` est optionnel. S'il est fourni, il est injecte dans le prompt comme contexte.
+
+Exemple de reponse :
+
+```json
+{
+  "reply": "Cette citation est de Friedrich Nietzsche..."
+}
+```
+
 Codes HTTP retournes :
 
-- `200` : traduction reussie
-- `400` : texte vide ou manquant
+- `200` : reponse generee avec succes
 - `401` : token absent ou invalide
-- `502` : le service MyMemory n'a pas retourne de resultat valide
-- `503` : le service MyMemory est inaccessible
+- `429` : quota Groq depasse
+- `503` : cle GROQ_API_KEY manquante
+- `502` : erreur de communication avec Groq
 
 ## 7. Flux d'information
 
@@ -284,9 +342,12 @@ Client Web <- token JWT stocke dans localStorage
 ### Flux de citation aleatoire (avec filtres optionnels)
 
 ```text
-Client Web -> GET /api/quotes/random?category=X&author=Y -> FastAPI -> API Ninjas
+Client Web -> GET /api/quotes/random?category=X&author=Y -> FastAPI
+FastAPI -> API Ninjas v2 (avec validation categorie et auteur)
+  Si valide : FastAPI persiste la citation dans MongoDB
+  Si invalide : FastAPI cherche dans MongoDB ($sample)
+  Si MongoDB vide : FastAPI retourne une citation locale de secours
 Client Web <- citation JSON
-(si API Ninjas indisponible : FastAPI retourne une citation locale)
 ```
 
 ### Flux de citation du jour
@@ -294,9 +355,18 @@ Client Web <- citation JSON
 ```text
 Client Web -> GET /api/quotes/daily -> FastAPI
 FastAPI : si cache valide pour aujourd'hui -> retourne la citation en cache
-FastAPI : sinon -> API Ninjas (ou selection deterministe locale)
+FastAPI : sinon -> API Ninjas (ou selection MongoDB ou locale)
 FastAPI -> mise en cache memoire pour la journee
 Client Web <- citation JSON (identique pour tous les utilisateurs)
+```
+
+### Flux du chatbot
+
+```text
+Client Web -> POST /api/chat { message, citation? } -> FastAPI
+FastAPI -> Groq API (llama-3.3-70b-versatile) avec prompt systeme + contexte
+Groq    -> reponse en francais
+Client Web <- { reply: "..." }
 ```
 
 ### Flux de note personnelle sur un favori
@@ -336,11 +406,12 @@ Client Web -> GET /api/quotes/favorites -> FastAPI -> MongoDB
 Client Web <- liste des favoris + details complets des citations
 ```
 
-### Flux de secours
+### Flux de secours (citations)
 
 ```text
 Si l'API Ninjas est indisponible :
-FastAPI utilise une liste locale de citations afin de maintenir le service
+  FastAPI interroge MongoDB ($sample par categorie si filtre actif)
+  Si MongoDB vide ou aucun resultat : retourne une citation de la liste locale (FR+EN)
 ```
 
 ## 8. Modele de donnees
@@ -360,7 +431,7 @@ FastAPI utilise une liste locale de citations afin de maintenir le service
       "id": "quote_123",
       "text": "Citation...",
       "author": "Auteur",
-      "category": "general",
+      "category": "inspirational",
       "note": "Ma note personnelle (optionnel)"
     }
   },
@@ -381,7 +452,7 @@ Le champ `note` dans `favorite_quotes` est optionnel (absent si aucune note).
   "id": "quote_123",
   "text": "Citation...",
   "author": "Auteur",
-  "category": "general",
+  "category": "inspirational",
   "cree_le": "...",
   "modifie_le": "..."
 }
@@ -401,7 +472,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 HOST=0.0.0.0
 PORT=8000
 RELOAD=False
-NINJAS_API_KEY=votre_cle_api
+NINJAS_API_KEY=votre_cle_api_ninjas
+GROQ_API_KEY=votre_cle_api_groq
+GOOGLE_CLIENT_ID=votre_client_id_google
+GOOGLE_CLIENT_SECRET=votre_client_secret_google
 ```
 
 ### Demarrage du backend
@@ -445,8 +519,8 @@ python -m http.server 5500
 
 Ouvrir :
 - la base `quote_keeper`
-- la collection `users`
-- la collection `quotes`
+- la collection `users` (comptes et favoris)
+- la collection `quotes` (citations persistees depuis l'API Ninjas)
 
 La presence des documents prouve la persistance reelle des donnees.
 
@@ -456,8 +530,9 @@ La presence des documents prouve la persistance reelle des donnees.
 - inscription via Google OAuth 2.0
 - connexion avec un utilisateur existant
 - verification de la session au rechargement (token valide)
-- generation d'une citation aleatoire depuis le service externe
-- filtrage des citations par categorie et par auteur
+- generation d'une citation aleatoire depuis l'API Ninjas
+- filtrage par categorie et par auteur
+- message d'erreur si l'auteur n'existe pas dans la base
 - affichage de la citation du jour (bandeau violet)
 - traduction d'une citation en francais (MyMemory)
 - copie d'une citation dans le presse-papier (toast de confirmation)
@@ -468,7 +543,10 @@ La presence des documents prouve la persistance reelle des donnees.
 - affichage des favoris apres reconnexion
 - navigation par pages dans les favoris (pagination)
 - recherche dans les favoris (texte, auteur)
-- ajout d'une citation personnalisee
+- ajout d'une citation personnalisee avec categorie (liste deroulante)
+- explication d'une citation via le bouton Expliquer (chatbot IA)
+- explication d'un favori via le bouton robot dans la liste
+- utilisation du chat libre via le bouton flottant
 - modification du nom sur la page profil
 - changement du mot de passe sur la page profil
 - bascule dark mode / light mode (persistance au rechargement)
@@ -480,7 +558,9 @@ La presence des documents prouve la persistance reelle des donnees.
 - page d'inscription
 - page principale avec citation du jour et filtres
 - page principale avec citation traduite
+- page principale avec bouton Expliquer actif et panel de chat ouvert
 - page principale avec plusieurs favoris, notes et pagination
+- favori avec bouton robot et chat ouvert avec contexte
 - page de profil
 - terminal du backend en fonctionnement
 - Swagger UI (nouveaux endpoints)
@@ -493,12 +573,12 @@ La presence des documents prouve la persistance reelle des donnees.
 
 - service web FastAPI fonctionnel
 - portail web HTML/CSS/JS avec appels AJAX
-- MongoDB connecte et persistance active
-- service externe integre
+- MongoDB connecte et persistance active (utilisateurs, favoris, citations)
+- services externes integres (API Ninjas, MyMemory, Google OAuth, Groq)
 - authentification JWT
 - reponses en JSON
-- gestion des favoris
-- documentation technique disponible
+- gestion des favoris avec notes personnelles
+- documentation technique disponible (Swagger, ReDoc)
 - flux d'information identifies
 - consignes d'installation redigees
 
@@ -508,10 +588,18 @@ La presence des documents prouve la persistance reelle des donnees.
 - appliquer la mise en page finale du document
 - relire la coherence visuelle et orthographique du rapport
 
-## 14. Application mobile (labo 4) personnelle 
+## 14. Application mobile (labo 4)
+
+L'application mobile React Native (Expo SDK 54) reproduit les fonctionnalites principales du portail web :
+- connexion / inscription
+- citation aleatoire avec filtres
+- gestion des favoris
+- citation personnalisee avec categorie (liste modale)
+
+Elle se connecte au meme backend FastAPI via l'URL configuree dans `mobile/constants/api.ts`.
 
 ## 15. Conclusion
 
-QuoteKeeper respecte l'architecture attendue d'une application web moderne separee entre un frontend et un backend. Le projet met en evidence la communication reseau entre le client web, le service FastAPI, MongoDB et trois services externes (API Ninjas, MyMemory, Google OAuth 2.0).
+QuoteKeeper respecte l'architecture attendue d'une application web moderne separee entre un frontend et un backend. Le projet met en evidence la communication reseau entre le client web, le service FastAPI, MongoDB et quatre services externes (API Ninjas, MyMemory, Google OAuth 2.0, Groq).
 
-L'application offre une interface complete avec dark mode, citation du jour, filtres de recherche, pagination des favoris, notes personnelles, page de profil et notifications visuelles. Elle illustre des notions importantes de securite (JWT, PBKDF2, OAuth 2.0), d'API REST, de persistance MongoDB et d'integration de services externes, tout en restant fonctionnelle en mode demonstration lorsque MongoDB est indisponible.
+L'application offre une interface complete avec dark mode, citation du jour, filtres de recherche avec validation stricte, pagination des favoris, notes personnelles, page de profil, notifications visuelles et un chatbot culturel IA capable d'expliquer les citations et de repondre a des questions litteraires et philosophiques. Elle illustre des notions importantes de securite (JWT, PBKDF2, OAuth 2.0), d'API REST, de persistance MongoDB et d'integration de services externes, tout en maintenant un mecanisme de secours robuste lorsque l'API principale est indisponible.

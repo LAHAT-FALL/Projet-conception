@@ -11,25 +11,33 @@ Le projet est actuellement fonctionnel de bout en bout :
 - frontend HTML/CSS/JavaScript operationnel
 - application mobile React Native (Expo SDK 54) operationnelle
 - base MongoDB connectee et persistance active
-- integration d'un service externe de citations avec API Ninjas
-- authentification par jeton JWT
-- gestion complete des favoris
-- recherche, copie et ajout de citations personnalisees
+- integration de l'API Ninjas pour les citations aleatoires avec persistance MongoDB
+- chatbot culturel propulse par Groq (llama-3.3-70b-versatile)
+- authentification par jeton JWT et Google OAuth 2.0
+- gestion complete des favoris avec notes personnelles
 
 ## Fonctionnalites principales
 
-- inscription d'un utilisateur
+- inscription d'un utilisateur (email/mot de passe ou Google OAuth 2.0)
 - connexion et deconnexion
-- authentification par JWT
-- recuperation d'une citation aleatoire
+- authentification securisee par JWT
+- recuperation d'une citation aleatoire avec filtres par categorie et auteur
+- validation stricte de l'auteur (rejet si l'auteur retourne ne correspond pas)
+- citation du jour (meme citation pour toute la journee)
+- traduction d'une citation en francais (MyMemory API)
+- copie rapide de la citation courante dans le presse-papier
 - ajout d'une citation aux favoris
+- notes personnelles sur les citations favorites
 - suppression d'une citation favorite
-- consultation de la liste des favoris
-- recherche dans les favoris par texte, auteur ou categorie
-- copie rapide de la citation courante
-- ajout d'une citation personnalisee
-- mode demonstration si MongoDB est indisponible
-- mecanisme de secours si l'API externe ne repond pas
+- consultation de la liste des favoris avec pagination
+- recherche dans les favoris (texte, auteur, categorie)
+- ajout d'une citation personnalisee avec choix de categorie
+- chatbot culturel (bouton Expliquer + chat flottant) avec injection du contexte de la citation
+- explication d'un favori directement depuis la liste des favoris
+- page de profil (modifier le nom, changer le mot de passe)
+- mode sombre / clair persistant
+- persistance MongoDB des citations issues de l'API Ninjas
+- liste locale de secours si l'API externe ne repond pas
 
 ## Technologies utilisees
 
@@ -39,6 +47,7 @@ Le projet est actuellement fonctionnel de bout en bout :
 - PyMongo
 - passlib
 - JWT
+- Groq SDK (llama-3.3-70b-versatile)
 
 ### Frontend
 - HTML
@@ -50,8 +59,11 @@ Le projet est actuellement fonctionnel de bout en bout :
 - MongoDB
 - MongoDB Compass
 
-### Service externe
-- API Ninjas Quotes API
+### Services externes
+- API Ninjas Quotes API (citations aleatoires)
+- MyMemory Translation API (traduction en francais)
+- Google OAuth 2.0 (authentification)
+- Groq API (chatbot IA)
 
 ## Architecture du projet
 
@@ -61,10 +73,12 @@ Navigateur Web
     | requetes AJAX / JSON
     v
 Service web FastAPI
-    |                |
-    |                +--> API Ninjas Quotes
+    |         |           |            |
+    |         |           |            +--> Groq API (chatbot IA)
+    |         |           +--> MyMemory API (traduction)
+    |         +--> API Ninjas Quotes (citations)
     |
-    +--> MongoDB
+    +--> MongoDB (persistance utilisateurs, favoris, citations)
 ```
 
 ## Structure du projet
@@ -79,6 +93,8 @@ Projet-conception/
 |   |   |-- main.py
 |   |   `-- routes/
 |   |       |-- auth_routes.py
+|   |       |-- chat_routes.py
+|   |       |-- google_routes.py
 |   |       `-- quotes_routes.py
 |   |-- .env
 |   |-- requirements.txt
@@ -90,34 +106,10 @@ Projet-conception/
 |   |   `-- script.js
 |   `-- index.html
 |-- mobile/
-|   |-- App.js
-|   |-- app.json
-|   |-- package.json
-INFO:     127.0.0.1:50726 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50742 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:38488 - "OPTIONS /api/auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "POST /api/auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "OPTIONS /api/quotes/favorites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "GET /api/quotes/favorites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "OPTIONS /api/quotes/daily HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "GET /api/quotes/daily HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "GET /api/quotes/daily HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50726 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50742 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:38488 - "OPTIONS /api/auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "POST /api/auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "OPTIONS /api/quotes/favorites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "GET /api/quotes/favorites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "OPTIONS /api/quotes/daily HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38488 - "GET /api/quotes/daily HTTP/1.1" 200 OK
+|   |-- app/
+|   |-- constants/
 |   |-- README.md
-|   `-- src/
-|       |-- constants/
-|       |-- contexts/
-|       |-- hooks/
-|       |-- navigation/
-|       |-- screens/
-|       `-- components/
+|   `-- ...
 |-- DEVIS.md
 `-- README.md
 ```
@@ -145,11 +137,14 @@ HOST=0.0.0.0
 PORT=8000
 RELOAD=False
 NINJAS_API_KEY=remplacer_par_votre_cle
+GROQ_API_KEY=remplacer_par_votre_cle_groq
+GOOGLE_CLIENT_ID=remplacer_par_votre_client_id
+GOOGLE_CLIENT_SECRET=remplacer_par_votre_client_secret
 ```
 
 Remarques :
 - `RELOAD=False` est recommande pour une demonstration plus stable.
-- ne pas publier de vraies cles secretes dans Git ou dans le rapport.
+- ne pas publier de vraies cles secretes dans Git.
 
 ## Installation
 
@@ -195,28 +190,29 @@ cd frontend
 python -m http.server 5500
 ```
 
-Puis ouvrir :
-- `http://localhost:5500`
+Puis ouvrir : `http://localhost:5500`
 
 ## Utilisation
 
 ### Parcours principal
 
-1. creer un compte
-2. se connecter
-3. cliquer sur `Nouvelle citation`
+1. creer un compte ou se connecter avec Google
+2. cliquer sur `Nouvelle citation`
+3. filtrer par categorie ou auteur si souhaite
 4. cliquer sur `Ajouter aux favoris`
-5. consulter les favoris
+5. cliquer sur `Expliquer` pour demander une explication au chatbot IA
+6. consulter et gerer ses favoris
 
 ### Fonctionnalites supplementaires
 
-- `Copier` : copie la citation courante dans le presse-papiers
-- `Ajouter ma propre citation` : permet d'enregistrer une citation personnalisee
-- champ de recherche : filtre les favoris par texte, auteur ou categorie
+- `Copier` : copie la citation courante dans le presse-papier
+- `Traduire` : traduit la citation en francais
+- `Expliquer` : ouvre le chatbot avec la citation en contexte
+- `Ajouter ma propre citation` : saisir une citation personnalisee avec categorie
+- bouton robot sur chaque favori : demander une explication de ce favori au chatbot
+- bouton flottant robot en bas a droite : ouvrir le chat libre
 
 ### Compte de demonstration
-
-Si MongoDB n'est pas disponible, le mode demonstration permet tout de meme de tester l'application :
 
 ```text
 demo@test.com / demo123
@@ -226,11 +222,9 @@ demo@test.com / demo123
 
 ### Base utilisee
 
-- `quote_keeper`
+`quote_keeper`
 
 ### Collection `users`
-
-Exemple de document :
 
 ```json
 {
@@ -238,13 +232,15 @@ Exemple de document :
   "nom": "Alice",
   "email": "alice@test.com",
   "mot_de_passe_hash": "...",
+  "google_id": "...",
   "favorites": ["quote_123"],
   "favorite_quotes": {
     "quote_123": {
       "id": "quote_123",
       "text": "Citation...",
       "author": "Auteur",
-      "category": "general"
+      "category": "inspirational",
+      "note": "Ma note personnelle (optionnel)"
     }
   },
   "cree_le": "...",
@@ -254,15 +250,13 @@ Exemple de document :
 
 ### Collection `quotes`
 
-Exemple de document :
-
 ```json
 {
   "_id": "...",
   "id": "quote_123",
   "text": "Citation...",
   "author": "Auteur",
-  "category": "general",
+  "category": "inspirational",
   "cree_le": "...",
   "modifie_le": "..."
 }
@@ -274,43 +268,55 @@ Exemple de document :
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
-- `POST /api/auth/logout`
+- `GET  /api/auth/verify`
+- `GET  /api/auth/google`
+- `GET  /api/auth/google/callback`
+- `GET  /api/auth/profile`
+- `PUT  /api/auth/profile`
+- `PUT  /api/auth/profile/password`
 
 ### Citations
 
-- `GET /api/quotes/random`
-- `GET /api/quotes/favorites`
+- `GET  /api/quotes/random`
+- `GET  /api/quotes/daily`
+- `GET  /api/quotes/translate`
+- `GET  /api/quotes/favorites`
 - `POST /api/quotes/favorites/{id}`
+- `PATCH /api/quotes/favorites/{id}/note`
 - `DELETE /api/quotes/favorites/{id}`
+
+### Chatbot
+
+- `POST /api/chat`
 
 ### Service et supervision
 
 - `GET /api/health`
 - `GET /api/config`
 
-## Service externe
-
-Le projet utilise `API Ninjas Quotes API` pour obtenir des citations reelles.
-
-Si l'API externe n'est pas accessible, le backend utilise automatiquement une liste locale de secours afin de garder l'application fonctionnelle.
-
 ## Tests manuels recommandes
 
-- inscription d'un nouvel utilisateur
+- inscription d'un nouvel utilisateur (email/mot de passe et Google)
 - connexion avec un compte existant
-- recuperation d'une citation aleatoire
-- ajout d'un favori
-- suppression d'un favori
-- ajout d'une citation personnalisee
-- recherche dans les favoris
+- recuperation d'une citation aleatoire avec et sans filtres
+- filtre par auteur avec message d'erreur si aucun resultat
+- traduction d'une citation en francais
+- copie d'une citation dans le presse-papier
+- ajout et suppression d'un favori
+- ajout d'une note personnelle sur un favori
+- ajout d'une citation personnalisee avec categorie
+- explication d'une citation via le chatbot (bouton Expliquer)
+- explication d'un favori via le bouton robot
+- chat libre avec le bot
+- bascule dark mode / light mode
 - verification de la persistance dans MongoDB Compass
 - consultation de la documentation Swagger et ReDoc
 
 ## Documentation associee
 
-Le fichier [DEVIS.md](/c:/Users/zoodollar/OneDrive/Documents/Projet-conception/DEVIS.md) contient :
-- la description du portail
-- les maquettes
+Le fichier [DEVIS.md](DEVIS.md) contient :
+- la description complete du portail
+- les maquettes des ecrans
 - les flux d'information
 - le modele de donnees
 - les consignes d'installation
@@ -322,12 +328,12 @@ Le fichier [DEVIS.md](/c:/Users/zoodollar/OneDrive/Documents/Projet-conception/D
 - Swagger permet de tester les endpoints
 - ReDoc permet de presenter la documentation de l'API
 - MongoDB Compass permet de montrer la persistance
-- les mots de passe sont haches avant stockage
-- certaines URLs et certains champs JSON restent en anglais pour respecter les conventions web usuelles
+- les mots de passe sont haches avant stockage (passlib PBKDF2)
+- le chatbot necessite une cle GROQ_API_KEY valide dans le `.env`
 
 ## Application mobile
 
-L'application mobile React Native reproduit toutes les fonctionnalites du portail web et se connecte au meme backend FastAPI.
+L'application mobile React Native reproduit les fonctionnalites principales du portail web et se connecte au meme backend FastAPI.
 
 Voir [mobile/README.md](mobile/README.md) pour les instructions de lancement.
 
