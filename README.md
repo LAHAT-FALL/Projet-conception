@@ -55,7 +55,7 @@ Le projet est fonctionnel de bout en bout :
 - changer le mot de passe (en connaissant l'ancien)
 - réinitialiser le mot de passe par OTP (sans connaître l'ancien)
 
-### RGPD
+### RGPD dans la BD
 - suppression définitive du compte et de toutes les données associées
 - export des données personnelles au format JSON (article 20 RGPD)
 
