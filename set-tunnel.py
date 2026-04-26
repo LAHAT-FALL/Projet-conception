@@ -3,11 +3,11 @@
 Met a jour l'URL du tunnel dans tous les fichiers du projet.
 
 Utilisation :
-    python set-tunnel.py https://nouvelle-url.loca.lt
+    python set-tunnel.py https://xxxx.loca.lt
 
 Ce script modifie :
-  - mobile/src/constants/api.js      (BASE_URL)
-  - backend/.env                     (GOOGLE_REDIRECT_URI)
+  - mobile/constants/api.ts     (API_URL)
+  - backend/.env                (GOOGLE_REDIRECT_URI)
 
 La cle GOOGLE_REDIRECT_URI du backend est construite automatiquement
 a partir de l'URL fournie.
@@ -25,27 +25,27 @@ def usage():
     sys.exit(1)
 
 
-def mettre_a_jour_api_js(url: str):
-    chemin = RACINE / "mobile" / "src" / "constants" / "api.js"
-    contenu = chemin.read_text()
+def mettre_a_jour_api_ts(url: str):
+    chemin = RACINE / "mobile" / "constants" / "api.ts"
+    contenu = chemin.read_text(encoding="utf-8")
     nouveau = re.sub(
-        r"export const BASE_URL\s*=\s*'[^']*';",
-        f"export const BASE_URL = '{url}/api';",
+        r'export const API_URL\s*=\s*"[^"]*";',
+        f'export const API_URL = "{url}/api";',
         contenu,
     )
-    chemin.write_text(nouveau)
-    print(f"  api.js          BASE_URL = {url}/api")
+    chemin.write_text(nouveau, encoding="utf-8")
+    print(f"  api.ts          API_URL = {url}/api")
 
 
 def mettre_a_jour_env(url: str):
     chemin = RACINE / "backend" / ".env"
-    contenu = chemin.read_text()
+    contenu = chemin.read_text(encoding="utf-8")
     nouveau = re.sub(
         r"GOOGLE_REDIRECT_URI=.*",
         f"GOOGLE_REDIRECT_URI={url}/api/auth/google/callback",
         contenu,
     )
-    chemin.write_text(nouveau)
+    chemin.write_text(nouveau, encoding="utf-8")
     print(f"  .env            GOOGLE_REDIRECT_URI = {url}/api/auth/google/callback")
 
 
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         usage()
 
     print(f"\nMise a jour du tunnel : {tunnel}\n")
-    mettre_a_jour_api_js(tunnel)
+    mettre_a_jour_api_ts(tunnel)
     mettre_a_jour_env(tunnel)
 
     print()

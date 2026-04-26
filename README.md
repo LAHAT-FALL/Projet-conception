@@ -210,52 +210,111 @@ application-                    # EXPO_PUBLIC_API_URL (non commité)
 
 ---
 
+## Obtention des clés API
+
+### API Ninjas (citations aléatoires)
+
+1. Créez un compte sur [api-ninjas.com](https://api-ninjas.com)
+2. Connectez-vous et accédez à **My Account**
+3. Copiez votre **API Key** affichée dans le tableau de bord
+4. Collez la valeur dans `NINJAS_API_KEY` du fichier `backend/.env`
+
+> Quota gratuit : 10 000 requêtes/mois. Sans clé, l'application fonctionne en fallback MongoDB uniquement.
+
+---
+
+### Groq API (assistant IA — Llama 3.3)
+
+1. Créez un compte sur [console.groq.com](https://console.groq.com)
+2. Dans le menu latéral, cliquez sur **API Keys**
+3. Cliquez sur **Create API Key**, donnez-lui un nom
+4. Copiez la clé générée (elle n'est affichée qu'une seule fois)
+5. Collez la valeur dans `GROQ_API_KEY` du fichier `backend/.env`
+
+> Quota gratuit généreux (aucune carte de crédit requise). Sans clé, le chatbot IA est désactivé.
+
+---
+
+### Google OAuth 2.0
+
+1. Rendez-vous sur [console.cloud.google.com](https://console.cloud.google.com)
+2. Créez un nouveau projet (ou sélectionnez un projet existant)
+3. Dans le menu, allez dans **APIs et services → Écran de consentement OAuth**
+   - Type d'utilisateur : **Externe**
+   - Remplissez le nom de l'application et l'email de support
+   - Ajoutez votre adresse email dans les « Utilisateurs test »
+4. Allez dans **APIs et services → Identifiants → Créer des identifiants → ID client OAuth 2.0**
+   - Type d'application : **Application Web**
+   - Origines JavaScript autorisées : `https://localhost:8000`
+   - URI de redirection autorisés : `https://localhost:8000/api/auth/google/callback`
+5. Copiez le **Client ID** et le **Client Secret**
+6. Renseignez `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` dans `backend/.env`
+
+> Sans clé Google, la connexion via Google OAuth est désactivée. Email/mot de passe et OTP fonctionnent normalement.
+
+---
+
+### Gmail SMTP (envoi des codes OTP)
+
+1. Connectez-vous à votre compte Gmail
+2. Activez la **validation en 2 étapes** : [myaccount.google.com/security](https://myaccount.google.com/security)
+3. Allez sur [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+4. Créez un mot de passe d'application : sélectionnez **Messagerie** → **Autre (nom personnalisé)** → tapez `QuoteKeeper`
+5. Copiez le mot de passe à 16 caractères généré
+6. Renseignez `SMTP_EMAIL` (votre adresse Gmail) et `SMTP_PASSWORD` (le mot de passe d'application) dans `backend/.env`
+
+> Sans configuration SMTP, les codes OTP sont affichés dans la console du serveur au lieu d'être envoyés par email (pratique pour le développement).
+
+---
+
+### SECRET_KEY (JWT)
+
+Générez une clé aléatoire forte :
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Collez le résultat dans `SECRET_KEY` du fichier `backend/.env`.
+
+---
+
 ## Configuration
 
-Le backend utilise un fichier `backend/.env` (à créer à partir de `backend/.env.example`).
+Copiez le fichier modèle et renseignez vos valeurs :
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Voici les variables clés à configurer :
 
 ```env
+# Sécurité (obligatoire — générer une clé aléatoire)
+SECRET_KEY=remplacer_par_une_cle_aleatoire_64_hex
+
 # Base de données
 MONGODB_URL=mongodb://localhost:27017
 MONGODB_DB_NAME=quote_keeper
 
-# Sécurité — générer avec : python -c "import secrets; print(secrets.token_hex(32))"
-SECRET_KEY=remplacer_par_une_cle_aleatoire_de_64_caracteres_hex
-ACCESS_TOKEN_EXPIRE_MINUTES=10080
-
-# Serveur
-HOST=0.0.0.0
-PORT=8000
-RELOAD=False
-ENV=development
-
 # API externes
-NINJAS_API_KEY=remplacer_par_votre_cle_ninjas
-GROQ_API_KEY=remplacer_par_votre_cle_groq
+NINJAS_API_KEY=votre_cle_api_ninjas
+GROQ_API_KEY=votre_cle_groq
 
 # Google OAuth 2.0
-GOOGLE_CLIENT_ID=remplacer
-GOOGLE_CLIENT_SECRET=remplacer
+GOOGLE_CLIENT_ID=votre_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=votre_client_secret
 GOOGLE_REDIRECT_URI=https://localhost:8000/api/auth/google/callback
-FRONTEND_URL=https://localhost:5500
 
-# CORS
-CORS_ORIGINS=https://localhost:5500,https://127.0.0.1:5500
-
-# SMTP (Gmail) — pour les codes OTP et la réinitialisation de MDP
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
+# SMTP Gmail
 SMTP_EMAIL=votre.email@gmail.com
-SMTP_PASSWORD=mot_de_passe_application_gmail
+SMTP_PASSWORD=xxxx_xxxx_xxxx_xxxx
 
-# Mode démonstration (MongoDB indisponible)
-DEMO_EMAIL=demo@test.com
-DEMO_PASSWORD=demo123
+# CORS — ajouter l'IP LAN si vous utilisez l'app mobile sur un vrai téléphone
+CORS_ORIGINS=https://localhost:5500,https://127.0.0.1:5500,http://localhost:8001,http://localhost:8081
 ```
 
-> **SMTP** : activez la validation en 2 étapes sur votre compte Gmail, puis créez un « Mot de passe d'application » sur https://myaccount.google.com/apppasswords
-
-> **SECRET_KEY** : générez une clé forte avec `python -c "import secrets; print(secrets.token_hex(32))"`
+Le fichier `backend/.env.example` contient le modèle complet avec les descriptions de chaque variable.
 
 ---
 
@@ -263,20 +322,40 @@ DEMO_PASSWORD=demo123
 
 ### Backend
 
-```powershell
+```bash
 cd backend
 python -m venv venv
+
+# Windows
 .\venv\Scripts\Activate.ps1
+
+# macOS / Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
 ### Certificat TLS (pour le navigateur)
 
-```powershell
+Installez [mkcert](https://github.com/FiloSottile/mkcert#installation), puis :
+
+```bash
+mkcert -install                  # installe la CA locale dans le navigateur (à faire une seule fois)
 cd backend
 mkdir certs
 mkcert -cert-file certs/cert.pem -key-file certs/key.pem localhost 127.0.0.1
 ```
+
+> `mkcert -install` doit être exécuté **en administrateur** sur Windows.
+
+### Application mobile
+
+```bash
+cd mobile
+npm install
+```
+
+Créez le fichier `mobile/.env` avec votre adresse IP locale (voir section [Application mobile](#3-application-mobile) ci-dessous).
 
 ---
 
@@ -309,7 +388,61 @@ URLs utiles :
 
 ### 3. Application mobile
 
-Voir [mobile/README.md](mobile/README.md) pour les instructions complètes.
+L'application se connecte au backend via HTTP sur le port `8001`. Votre téléphone
+et votre PC doivent être sur le **même réseau Wi-Fi**.
+
+#### Trouver votre adresse IP locale
+
+**Windows :**
+```powershell
+ipconfig
+```
+Repérez l'IPv4 de l'adaptateur Wi-Fi (exemple : `192.168.1.42`).
+
+**macOS / Linux :**
+```bash
+ifconfig | grep "inet "
+```
+
+#### Configurer `mobile/.env`
+
+Créez le fichier `mobile/.env` :
+
+```env
+EXPO_PUBLIC_API_URL=http://192.168.1.42:8001/api
+REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.42
+```
+
+Remplacez `192.168.1.42` par votre IP.
+
+#### Ajouter l'IP dans CORS (backend)
+
+Dans `backend/.env`, ajoutez votre IP et le port Metro dans `CORS_ORIGINS` :
+
+```env
+CORS_ORIGINS=https://localhost:5500,https://127.0.0.1:5500,http://localhost:8001,http://192.168.1.42:8081
+```
+
+Redémarrez le backend après cette modification.
+
+#### Ouvrir le port 8001 (Windows uniquement)
+
+```powershell
+# À exécuter dans un terminal administrateur
+netsh advfirewall firewall add rule name="QuoteKeeper Backend Mobile" dir=in action=allow protocol=TCP localport=8001
+```
+
+#### Lancer l'application
+
+```bash
+cd mobile
+npm start
+```
+
+Scannez le QR code affiché dans le terminal avec **Expo Go** (Android) ou
+l'application **Appareil photo** (iOS).
+
+Voir [mobile/README.md](mobile/README.md) pour le détail complet et le dépannage.
 
 ---
 

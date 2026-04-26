@@ -159,9 +159,14 @@ def piocher_citation_depuis_mongodb(
     if category:
         filtre["category"] = category.lower().strip()
 
-    # Relaxation progressive : si le filtre combine ne donne rien, on retire
-    # la categorie pour ne pas renvoyer une erreur sur un auteur valide.
-    for tentative in [filtre, {"author": filtre["author"]} if author else None, {}]:
+    # Quand les deux filtres sont specifies, on exige la combinaison exacte sans relaxation.
+    # Quand un seul filtre est present, on tente le filtre puis n'importe quelle citation.
+    if author and category:
+        tentatives = [filtre]
+    else:
+        tentatives = [filtre, {"author": filtre["author"]} if author else None, {}]
+
+    for tentative in tentatives:
         if tentative is None:
             continue
         resultats = list(collection.aggregate([
@@ -362,6 +367,11 @@ async def obtenir_citation_aleatoire(
                         citation_db = piocher_citation_depuis_mongodb(author=author, category=categorie_normalisee)
                         if citation_db:
                             return ReponseCitation(**citation_db)
+                        if category:
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"Aucune citation trouvee pour l'auteur '{author}' dans la categorie '{category}'.",
+                            )
 
                     persister_citation_si_possible(citation)
                     return ReponseCitation(**citation)
@@ -375,6 +385,17 @@ async def obtenir_citation_aleatoire(
     citation_db = piocher_citation_depuis_mongodb(author=author, category=category)
     if citation_db:
         return ReponseCitation(**citation_db)
+
+    if author and category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Aucune citation trouvee pour l'auteur '{author}' dans la categorie '{category}'.",
+        )
+    if author:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Aucune citation trouvee pour l'auteur '{author}'.",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
